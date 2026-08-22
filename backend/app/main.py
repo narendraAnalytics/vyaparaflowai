@@ -1,5 +1,3 @@
-import asyncio
-import sys
 import uuid
 from contextlib import asynccontextmanager
 
@@ -10,15 +8,6 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import AsyncSessionLocal
-
-if sys.platform == "win32":
-    # psycopg3's async mode requires a SelectorEventLoop; Windows defaults to
-    # ProactorEventLoop, which raises psycopg.InterfaceError on every query.
-    # This covers pytest and any plain `asyncio.run()` entrypoint. It does
-    # NOT cover `uvicorn app.main:app` / `fastapi dev` directly — uvicorn
-    # >=0.36 constructs ProactorEventLoop as its own loop factory on Windows,
-    # bypassing this policy. Use `make dev` (app/dev.py) for real serving.
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 settings = get_settings()
 configure_logging(settings.log_level)
