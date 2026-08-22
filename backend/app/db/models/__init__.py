@@ -3,6 +3,7 @@ Alembic autogenerate or Base.metadata.create_all runs.
 """
 
 from . import (  # noqa: F401
+    auth,
     catalog,
     enums,
     finance,
