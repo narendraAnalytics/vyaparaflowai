@@ -15,9 +15,14 @@ reconciles the incoming UPI payment — with a human in the loop wherever
 money or irreversible decisions are involved.
 
 - `roadmap.txt` (gitignored, local-only) is the authoritative phase-by-phase
-  build plan — work through it phase by phase, don't jump ahead.
+  build plan — work through it phase by phase, don't jump ahead. Phases 0
+  (foundation) and 1 (domain model + seed data) are done; Phase 2 (FastAPI
+  business logic) is next.
 - `docs/adr/` holds architecture decision records — read ADR 0001 before
   changing any part of the core stack.
+- `docs/er-diagram.md` has the full schema as Mermaid ERDs, grouped the
+  same way as `roadmap.txt` Phase 1 — read it before adding or changing a
+  table, not just the model file in isolation.
 - `n8nworkflow.md` documents n8n operating lessons (how to edit workflows
   via n8n-mcp, common error patterns, verification method) carried over
   from a prior project — read it before touching any n8n workflow.
@@ -57,10 +62,23 @@ rule (pricing, GST, inventory reservation, three-way match, reorder
 quantity) lives in `backend/app/services/` and n8n calls it over HTTP.
 
 **Inventory and money only change through an append-only ledger row inside
-a database transaction** (`stock_ledger`, `ledger_entries` — Phase 1). No
-direct `UPDATE` to a quantity or balance column. This is the audit-trail
-design and it is load-bearing for the three-way-match and reconciliation
-logic later in the roadmap — don't bypass it for a "quick" write.
+a database transaction** (`stock_ledger`, `ledger_entries`). No direct
+`UPDATE` to a quantity or balance column — enforced by convention today
+(Phase 1 schema, docstrings on the models), will be enforced in code once
+`services/inventory.py` exists (Phase 2). `inventory_items.available` is a
+real Postgres `GENERATED` column (`on_hand - reserved`), not app-computed —
+don't try to set it directly. This is load-bearing for the three-way-match
+and reconciliation logic later in the roadmap — don't bypass it for a
+"quick" write.
+
+**Document numbers (`PO-2026-00001` etc.) are gapless and concurrency-safe**
+via `backend/app/services/numbering.py` — one atomic `UPDATE ...
+SET last_value = last_value + 1 RETURNING` per (org, doc_type, financial
+year), relying on Postgres's own row lock rather than an explicit `SELECT
+... FOR UPDATE`. A plain Postgres `SEQUENCE` was deliberately rejected —
+see the module docstring for why. Every service that creates a
+PO/PR/SO/invoice/etc. should go through this rather than inventing its own
+numbering.
 
 **Managed cloud services, not local containers, for stateful infra.**
 Postgres is Neon (not a local container) and Redis is Upstash (not a local
@@ -76,8 +94,16 @@ paste connection details when you need to inspect/branch/query the database.
   (`Idempotency-Key` header — middleware added in Phase 2).
 - AI (Phase 4+) never takes an irreversible action alone — a deterministic
   rule/threshold gates it before anything commits.
-- All money is `NUMERIC(14,2)`, never float.
+- All money is `NUMERIC(14,2)`, never float; quantities are `NUMERIC(14,3)`
+  (hardware is sold both as whole pieces and continuous units like wire
+  meters/coils).
+- Status columns are plain `VARCHAR` + an explicit `CHECK (... IN (...))`
+  against a Python `StrEnum` in `app/db/models/enums.py`, never a native
+  Postgres `ENUM` type — adding a new status later is a plain migration,
+  not an `ALTER TYPE` dance.
 - A phase in `roadmap.txt` is done only when its "Definition of Done" is
-  fully verified with a real request/response, not just "tests pass" — see
-  the Phase 0 entries for the pattern (health check bugs were only caught
-  by testing over real HTTP, not the test client alone).
+  fully verified against the real system, not just "tests pass" — e.g.
+  Phase 0's health-check bugs were only caught by testing over real HTTP,
+  not the test client alone; Phase 1's migrations were downgrade/upgrade
+  round-tripped for real against Neon, and its numbering logic was proven
+  gapless under genuine concurrent load, not asserted from a single call.
