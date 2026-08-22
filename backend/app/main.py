@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 import redis.asyncio as redis
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.core.config import get_settings
@@ -24,6 +25,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="VyaparaFlow AI", version="0.1.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.middleware("http")
