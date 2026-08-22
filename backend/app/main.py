@@ -9,6 +9,7 @@ from sqlalchemy import text
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
+from app.core.idempotency import IdempotencyMiddleware
 from app.core.logging import configure_logging, get_logger
 from app.db.session import AsyncSessionLocal
 
@@ -37,6 +38,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(IdempotencyMiddleware)
 
 app.include_router(api_router)
 
