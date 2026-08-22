@@ -61,11 +61,13 @@ app/core/
   idempotency.py     ASGI middleware: Postgres idempotency_keys row +
                      short-lived Redis lock for the request-hash + response.
 
-app/db/models/auth.py   New tables (new Alembic migration):
+app/db/models/auth.py   New table (new Alembic migration):
   refresh_tokens   id, user_id FK, token_hash (argon2), issued_at,
                    expires_at, revoked_at (nullable)
-  api_keys         id, org_id FK, name, key_hash (argon2), created_at,
-                   revoked_at (nullable), last_used_at
+                   (No api_keys table: Phase 0 already scaffolded a single
+                   static N8N_API_KEY env var for the one service caller
+                   that exists before Phase 3 — a DB-backed multi-key table
+                   is YAGNI until n8n needs per-workflow keys/rotation.)
 
 app/schemas/auth.py     LoginRequest, TokenPair, RefreshRequest, ApiKeyOut
 app/api/v1/auth.py       POST /auth/login, POST /auth/refresh, POST /auth/logout
@@ -94,10 +96,12 @@ repo layer to filter every query by.
 `POST /auth/logout` sets `revoked_at` on the current refresh token row.
 
 **n8n service call**
-`X-API-Key: <key>` → `get_api_key_org()` hashes the key, looks it up in
-`api_keys` (must not be revoked), resolves `org_id`. No user/roles attached
-— this is a service identity, used only by endpoints that accept service
-callers (defined per-router, not globally).
+`X-API-Key: <key>` → `get_api_key_org()` compares against
+`settings.n8n_api_key` using `secrets.compare_digest` (constant-time,
+timing-attack-safe), resolves `org_id` from a new `settings.n8n_org_id`
+(the single seeded org for now). No user/roles attached — this is a
+service identity, used only by endpoints that accept service callers
+(defined per-router, not globally). A mismatch or missing header is 401.
 
 **Idempotent POST**
 1. Middleware reads `Idempotency-Key` header (required only on routes that
@@ -145,7 +149,7 @@ error shape from day one.
   conventions, real Neon + Upstash — no mocking, consistent with Phase 0/1):
   - login → access+refresh pair; refresh rotates; logout revokes.
   - RBAC: a Sales-role user hitting a Manager-only route gets 403.
-  - API-key auth: valid key resolves org; revoked/invalid key gets 401.
+  - API-key auth: valid key resolves org; wrong/missing key gets 401.
   - Rate limit: N+1th request in a window gets 429 with `Retry-After`.
   - Idempotency: concurrency test in the `test_numbering.py` pattern — M
     concurrent identical POSTs to a toy idempotent route produce exactly
