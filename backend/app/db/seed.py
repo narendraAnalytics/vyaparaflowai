@@ -10,15 +10,18 @@ import random
 
 from sqlalchemy import select
 
+from app.core.security import hash_secret
 from app.db.models.catalog import Product, ProductSupplier, Warehouse
 from app.db.models.inventory import InventoryItem
-from app.db.models.org import Organization
+from app.db.models.org import Organization, Role, User, UserRole
 from app.db.models.partners import Customer, Supplier
 from app.db.session import AsyncSessionLocal
 
 random.seed(20260822)  # reproducible seed data across runs
 
 ORG_NAME = "Sri Lakshmi Hardware & Electricals"
+DEMO_USER_PASSWORD = "Passw0rd!2026"
+ROLE_NAMES = ["Owner", "Manager", "Sales", "Warehouse", "Accounts"]
 
 # (name, gstin, state_code, lead_time_days, reliability_score, category)
 SUPPLIERS: list[tuple[str, str, str, int, int, str]] = [
@@ -613,6 +616,37 @@ async def seed() -> None:
             session.add(warehouse)
             await session.flush()
         print(f"warehouse: {warehouse.name} ({warehouse.id})")
+
+        roles: dict[str, Role] = {}
+        for role_name in ROLE_NAMES:
+            existing_role = (
+                await session.execute(select(Role).where(Role.name == role_name))
+            ).scalar_one_or_none()
+            if existing_role is None:
+                existing_role = Role(name=role_name)
+                session.add(existing_role)
+                await session.flush()
+            roles[role_name] = existing_role
+        print(f"roles: {len(roles)}")
+
+        for role_name in ROLE_NAMES:
+            email = f"{role_name.lower()}@srilakshmi.example.com"
+            existing_user = (
+                await session.execute(
+                    select(User).where(User.org_id == org.id, User.email == email)
+                )
+            ).scalar_one_or_none()
+            if existing_user is None:
+                existing_user = User(
+                    org_id=org.id,
+                    email=email,
+                    full_name=f"Demo {role_name}",
+                    hashed_password=hash_secret(DEMO_USER_PASSWORD),
+                )
+                session.add(existing_user)
+                await session.flush()
+                session.add(UserRole(user_id=existing_user.id, role_id=roles[role_name].id))
+        print("demo users: 5 (one per role)")
 
         suppliers: list[Supplier] = []
         for sup_name, gstin, state_code, lead_time, reliability, _category in SUPPLIERS:
