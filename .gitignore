@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[oc]
+*.egg-info/
+build/
+dist/
+wheels/
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Local planning docs — kept locally, not pushed to GitHub
+/roadmap.txt
+/summary.txt
+/workflow.txt
+
+# Node / frontend
+node_modules/
+.next/
+out/
+
+# n8n runtime data (workflows JSON exports ARE committed, this is just the sqlite/db data dir)
+n8n/data/
+
+# Docker / infra
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/*.tfvars
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude Code local session state
+.claude/
