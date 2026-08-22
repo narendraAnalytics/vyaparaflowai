@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.core.config import get_settings
+from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.db.session import AsyncSessionLocal
 
@@ -25,6 +26,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="VyaparaFlow AI", version="0.1.0", lifespan=lifespan)
+
+register_exception_handlers(app)
 
 app.add_middleware(
     CORSMiddleware,
