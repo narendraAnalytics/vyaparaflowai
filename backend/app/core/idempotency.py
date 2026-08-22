@@ -64,7 +64,22 @@ def _conflict(request: Request, detail: str) -> JSONResponse:
     )
 
 
-async def _resolve_org_id(request: Request) -> str | None:
+async def _resolve_identity_scope(request: Request) -> str | None:
+    """Resolve the caller's identity scope for idempotency-key isolation.
+
+    Returns a scope string to prefix the key with, or None if no identity
+    could be resolved (the caller falls back to an anonymous scope in that
+    case). For the n8n service (X-API-Key) branch this is org-only — that
+    key represents a single service identity, not multiple end-users
+    sharing an org's auth, so there's no user to further scope by. For the
+    Bearer-token branch it MUST include the user id, not just org_id:
+    org-only scoping would let two different users in the same org collide
+    on org+key+matching-body and replay each other's cached response on
+    any future authenticated POST endpoint that adds this header — this
+    middleware is wired globally and is documented reusable infrastructure,
+    so that gap has to be closed here rather than left for every future
+    endpoint to remember.
+    """
     settings = get_settings()
     api_key = request.headers.get("X-API-Key")
     if api_key:
@@ -87,7 +102,7 @@ async def _resolve_org_id(request: Request) -> str | None:
         return None
     async with AsyncSessionLocal() as session:
         user = await session.get(User, user_id)
-        return str(user.org_id) if user else None
+        return f"{user.org_id}:{user.id}" if user else None
 
 
 class IdempotencyMiddleware(BaseHTTPMiddleware):
@@ -96,8 +111,8 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         if request.method != "POST" or not idem_key_header:
             return await call_next(request)
 
-        org_id = await _resolve_org_id(request)
-        if org_id is None:
+        scope = await _resolve_identity_scope(request)
+        if scope is None:
             # No resolvable identity yet (e.g. login itself, before a
             # token exists) — for /auth/login specifically we still want
             # idempotency, so fall back to a per-request scope: hash the
@@ -117,11 +132,11 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             if isinstance(parsed_body, dict) and isinstance(parsed_body.get("email"), str):
                 email = parsed_body["email"]
             scope_source = email.encode() if email is not None else body_preview[:64]
-            org_id = f"anon:{hashlib.sha256(scope_source).hexdigest()[:8]}"
+            scope = f"anon:{hashlib.sha256(scope_source).hexdigest()[:8]}"
 
         body_bytes = await request.body()
         request_hash = hashlib.sha256(body_bytes).hexdigest()
-        scoped_key = f"{org_id}:{idem_key_header}"
+        scoped_key = f"{scope}:{idem_key_header}"
 
         async with AsyncSessionLocal() as session:
             existing = await session.get(IdempotencyKey, scoped_key)
@@ -160,18 +175,33 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                         request, "A request with this Idempotency-Key is already in progress"
                     )
 
-            response = await call_next(request)
-            # call_next always hands back Starlette's internal
-            # `_StreamingResponse` (that's how BaseHTTPMiddleware wraps
-            # whatever the downstream endpoint returned) — it is not the
-            # public `starlette.responses.StreamingResponse` class, so
-            # this attribute isn't in the `Response` type stub even
-            # though it's always present at runtime here.
-            body_chunks = [
-                chunk.encode() if isinstance(chunk, str) else bytes(chunk)
-                async for chunk in response.body_iterator  # type: ignore[attr-defined]
-            ]
-            response_body = b"".join(body_chunks)
+            try:
+                response = await call_next(request)
+                # call_next always hands back Starlette's internal
+                # `_StreamingResponse` (that's how BaseHTTPMiddleware wraps
+                # whatever the downstream endpoint returned) — it is not
+                # the public `starlette.responses.StreamingResponse`
+                # class, so this attribute isn't in the `Response` type
+                # stub even though it's always present at runtime here.
+                body_chunks = [
+                    chunk.encode() if isinstance(chunk, str) else bytes(chunk)
+                    async for chunk in response.body_iterator  # type: ignore[attr-defined]
+                ]
+                response_body = b"".join(body_chunks)
+            except Exception:
+                # call_next raised instead of returning a response (an
+                # exception register_exception_handlers didn't catch, or
+                # one raised while draining body_iterator) — the
+                # placeholder row must not survive past this request, or
+                # every retry with this key would get a permanent
+                # "already in progress" 409 for the full RECORD_TTL_HOURS
+                # window even though the original attempt never finished.
+                async with AsyncSessionLocal() as session:
+                    row = await session.get(IdempotencyKey, scoped_key)
+                    if row is not None:
+                        await session.delete(row)
+                        await session.commit()
+                raise
 
             async with AsyncSessionLocal() as session:
                 row = await session.get(IdempotencyKey, scoped_key)
