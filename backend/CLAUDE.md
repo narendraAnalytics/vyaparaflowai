@@ -58,12 +58,19 @@ app/
                  populated for Alembic autogenerate / create_all
     seed.py      idempotent demo data — Sri Lakshmi Hardware, 5 suppliers,
                  10 customers, 60 SKUs (make seed)
-  schemas/       Pydantic request/response contracts (empty until Phase 2)
-  api/v1/        FastAPI routers (empty until Phase 2)
+  schemas/       Pydantic request/response contracts — auth.py, plus
+                 master_data.py (Customer/Supplier/Product/Warehouse
+                 Create/Update/Out + a generic Page[T] wrapper)
+  api/v1/        FastAPI routers — auth.py, plus customers.py/suppliers.py/
+                 products.py/warehouses.py (Phase 2.4 master data CRUD:
+                 paginated list with q search + is_active filter, get,
+                 create, patch, soft-delete/deactivate; org-scoped off the
+                 JWT user, reads open to any authenticated org member,
+                 writes gated by require_perm(<entity>.manage))
   services/      business logic — the real value of the project, called by
                  n8n over HTTP, never duplicated into n8n Code nodes.
                  numbering.py (Phase 1) is built; pricing/inventory/sales/
-                 procurement/matching land in Phase 2
+                 procurement/matching land later in Phase 2
   workers/       background jobs (arq/celery — not yet built)
   ai/            document extraction, prompts, eval harness (Phase 4)
   integrations/  gst/, razorpay/, whatsapp/, storage/ (Phase 4-5)
@@ -136,6 +143,13 @@ Tests hit real Neon + Upstash (no mocking) — this is intentional for now
 (Phase 0/1 has limited domain logic to unit-test in isolation yet); once
 more of `services/` exists, prefer unit tests with a Neon branch or
 testcontainers for isolation rather than hitting the shared dev database.
+
+Because tests hit real, persistent Neon data (not a fresh DB per run), any
+test that creates a row under a unique constraint (product SKU, warehouse
+code, etc.) must generate a fresh value per run (e.g. a `uuid.uuid4().hex`
+suffix) rather than a fixed literal — a fixed literal passes the first
+time but then permanently 409s on every later run once that row exists.
+`tests/test_master_data_api.py` is the pattern to copy.
 
 `tests/test_numbering.py::test_numbering_gapless_under_concurrency` is the
 pattern to copy for anything claiming to be concurrency-safe: spin up N
