@@ -126,11 +126,12 @@ async def _apply(
     ref_type: str,
     ref_id: uuid.UUID | None,
     note: str | None,
+    from_reservation: bool = True,
 ) -> list[InventoryMutationResult]:
     results: list[InventoryMutationResult] = []
     for line in sorted(lines, key=_sort_key):
         await _ensure_row(session, product_id=line.product_id, warehouse_id=line.warehouse_id)
-        stmt, qty_delta = _build_statement(line, movement_type)
+        stmt, qty_delta = _build_statement(line, movement_type, from_reservation=from_reservation)
         row = (await session.execute(stmt)).first()
         if row is None:
             raise ConflictError(
@@ -173,7 +174,12 @@ def _unpack(row: Row) -> tuple[Decimal, Decimal]:
     return Decimal(row[0]), Decimal(row[1])
 
 
-def _build_statement(line: InventoryLine | AdjustmentLine, movement_type: StockMovementType):
+def _build_statement(
+    line: InventoryLine | AdjustmentLine,
+    movement_type: StockMovementType,
+    *,
+    from_reservation: bool = True,
+):
     item = InventoryItem
     if movement_type is StockMovementType.RESERVE:
         assert isinstance(line, InventoryLine)
@@ -215,16 +221,32 @@ def _build_statement(line: InventoryLine | AdjustmentLine, movement_type: StockM
 
     if movement_type is StockMovementType.ISSUE:
         assert isinstance(line, InventoryLine)
-        stmt = (
-            update(item)
-            .where(
-                item.product_id == line.product_id,
-                item.warehouse_id == line.warehouse_id,
-                item.reserved >= line.quantity,
+        if from_reservation:
+            # dispatch against a prior reservation: both columns move together
+            stmt = (
+                update(item)
+                .where(
+                    item.product_id == line.product_id,
+                    item.warehouse_id == line.warehouse_id,
+                    item.reserved >= line.quantity,
+                )
+                .values(
+                    on_hand=item.on_hand - line.quantity, reserved=item.reserved - line.quantity
+                )
+                .returning(item.on_hand, item.reserved)
             )
-            .values(on_hand=item.on_hand - line.quantity, reserved=item.reserved - line.quantity)
-            .returning(item.on_hand, item.reserved)
-        )
+        else:
+            # direct/counter sale: nothing was ever reserved, only on_hand moves
+            stmt = (
+                update(item)
+                .where(
+                    item.product_id == line.product_id,
+                    item.warehouse_id == line.warehouse_id,
+                    item.on_hand >= line.quantity,
+                )
+                .values(on_hand=item.on_hand - line.quantity)
+                .returning(item.on_hand, item.reserved)
+            )
         return stmt, -line.quantity
 
     if movement_type is StockMovementType.ADJUSTMENT:
@@ -314,9 +336,18 @@ async def issue(
     ref_type: str,
     ref_id: uuid.UUID | None = None,
     note: str | None = None,
+    from_reservation: bool = True,
 ) -> list[InventoryMutationResult]:
-    """Dispatch a delivery: decrease on_hand AND reserved together (stock
-    physically leaves the warehouse against a prior reservation).
+    """Stock physically leaves the warehouse — a delivery dispatch or a
+    direct/counter sale.
+
+    `from_reservation=True` (default): dispatch against a prior
+    reservation — decrease on_hand AND reserved together, guarded by
+    `reserved >= quantity`. `from_reservation=False`: a direct sale with no
+    prior reservation (walk-in/counter sale) — decrease on_hand only,
+    guarded by `on_hand >= quantity`; `reserved` is untouched. Both record
+    the same StockMovementType.ISSUE in the ledger — the distinction is in
+    which columns moved and which guard applied, not in the movement type.
     """
     return await _apply(
         session,
@@ -325,6 +356,7 @@ async def issue(
         ref_type=ref_type,
         ref_id=ref_id,
         note=note,
+        from_reservation=from_reservation,
     )
 
 
