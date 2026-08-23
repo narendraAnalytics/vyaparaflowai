@@ -99,16 +99,23 @@ async def _ensure_row(
     )
 
 
-async def check_availability(
-    session: AsyncSession, *, product_id: uuid.UUID, warehouse_id: uuid.UUID, quantity: Decimal
-) -> bool:
+async def get_available(
+    session: AsyncSession, *, product_id: uuid.UUID, warehouse_id: uuid.UUID
+) -> Decimal:
     result = await session.execute(
         select(InventoryItem.available).where(
             InventoryItem.product_id == product_id, InventoryItem.warehouse_id == warehouse_id
         )
     )
     available = result.scalar_one_or_none()
-    return available is not None and available >= quantity
+    return Decimal(available) if available is not None else ZERO
+
+
+async def check_availability(
+    session: AsyncSession, *, product_id: uuid.UUID, warehouse_id: uuid.UUID, quantity: Decimal
+) -> bool:
+    available = await get_available(session, product_id=product_id, warehouse_id=warehouse_id)
+    return available >= quantity
 
 
 async def _apply(
