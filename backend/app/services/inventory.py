@@ -47,14 +47,16 @@ sales_orders (Phase 2.7) as a status+timestamp-driven job, not here.
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
-from sqlalchemy import Row, select, update
+from sqlalchemy import Row, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError
+from app.db.models.catalog import Product
 from app.db.models.enums import StockMovementType
 from app.db.models.inventory import InventoryItem, StockLedger
 
@@ -116,6 +118,86 @@ async def check_availability(
 ) -> bool:
     available = await get_available(session, product_id=product_id, warehouse_id=warehouse_id)
     return available >= quantity
+
+
+class InventorySnapshot(BaseModel):
+    product_id: uuid.UUID
+    warehouse_id: uuid.UUID
+    on_hand: Decimal
+    reserved: Decimal
+    available: Decimal
+    reorder_level: Decimal
+    safety_stock: Decimal
+
+
+def _snapshot(item: InventoryItem) -> InventorySnapshot:
+    return InventorySnapshot(
+        product_id=item.product_id,
+        warehouse_id=item.warehouse_id,
+        on_hand=Decimal(item.on_hand),
+        reserved=Decimal(item.reserved),
+        available=Decimal(item.available),
+        reorder_level=Decimal(item.reorder_level),
+        safety_stock=Decimal(item.safety_stock),
+    )
+
+
+async def get_snapshot(
+    session: AsyncSession, *, product_id: uuid.UUID, warehouse_id: uuid.UUID
+) -> InventorySnapshot | None:
+    result = await session.execute(
+        select(InventoryItem).where(
+            InventoryItem.product_id == product_id, InventoryItem.warehouse_id == warehouse_id
+        )
+    )
+    item = result.scalar_one_or_none()
+    return _snapshot(item) if item is not None else None
+
+
+async def list_below_reorder_level(
+    session: AsyncSession, *, org_id: uuid.UUID, warehouse_id: uuid.UUID
+) -> list[InventorySnapshot]:
+    """Every (product, warehouse) row currently short of its reorder point —
+    the read side of Phase 2.8's proactive shortage detection. Joins
+    products only to scope by org_id; this module still owns the read.
+    """
+    result = await session.execute(
+        select(InventoryItem)
+        .join(Product, Product.id == InventoryItem.product_id)
+        .where(
+            Product.org_id == org_id,
+            InventoryItem.warehouse_id == warehouse_id,
+            InventoryItem.available < InventoryItem.reorder_level,
+        )
+    )
+    return [_snapshot(item) for item in result.scalars().all()]
+
+
+async def average_daily_issued(
+    session: AsyncSession,
+    *,
+    product_id: uuid.UUID,
+    warehouse_id: uuid.UUID,
+    lookback_days: int = 30,
+) -> Decimal:
+    """Average units of this product ISSUEd (dispatched or sold, either
+    reservation-backed or a direct counter sale — both write the same
+    StockMovementType.ISSUE row) per day over the trailing window. Feeds
+    the reorder-quantity calculator's demand-during-lead-time term.
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
+    result = await session.execute(
+        select(func.coalesce(func.sum(-StockLedger.qty_delta), 0)).where(
+            StockLedger.product_id == product_id,
+            StockLedger.warehouse_id == warehouse_id,
+            StockLedger.movement_type == StockMovementType.ISSUE,
+            StockLedger.created_at >= cutoff,
+        )
+    )
+    total_issued = Decimal(result.scalar_one())
+    if total_issued <= ZERO:
+        return ZERO
+    return total_issued / Decimal(lookback_days)
 
 
 async def _apply(
