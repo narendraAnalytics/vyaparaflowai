@@ -60,6 +60,9 @@ Next.js 16 (dashboard)
 integration layer only — webhooks, notifications, approval routing. Every
 rule (pricing, GST, inventory reservation, three-way match, reorder
 quantity) lives in `backend/app/services/` and n8n calls it over HTTP.
+GST/pricing is built (`services/pricing.py`, Phase 2.5) — CGST/SGST/IGST,
+discounts, cess, rounding, HSN-wise summary, all pure functions on
+`Decimal`, no DB access; inventory/sales/procurement/matching are next.
 
 **Inventory and money only change through an append-only ledger row inside
 a database transaction** (`stock_ledger`, `ledger_entries`). No direct
@@ -96,7 +99,11 @@ paste connection details when you need to inspect/branch/query the database.
   rule/threshold gates it before anything commits.
 - All money is `NUMERIC(14,2)`, never float; quantities are `NUMERIC(14,3)`
   (hardware is sold both as whole pieces and continuous units like wire
-  meters/coils).
+  meters/coils). In Python this means `Decimal`, not `float`, end to end —
+  SQLAlchemy's `Numeric` type defaults to `asdecimal=True`, so ORM money
+  columns already round-trip as `Decimal` at runtime even where an older
+  `Mapped[float]` type hint says otherwise (cosmetic drift, not the real
+  contract); `services/pricing.py` is the reference for doing this right.
 - Status columns are plain `VARCHAR` + an explicit `CHECK (... IN (...))`
   against a Python `StrEnum` in `app/db/models/enums.py`, never a native
   Postgres `ENUM` type — adding a new status later is a plain migration,

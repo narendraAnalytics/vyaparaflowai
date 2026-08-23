@@ -69,8 +69,15 @@ app/
                  writes gated by require_perm(<entity>.manage))
   services/      business logic — the real value of the project, called by
                  n8n over HTTP, never duplicated into n8n Code nodes.
-                 numbering.py (Phase 1) is built; pricing/inventory/sales/
-                 procurement/matching land later in Phase 2
+                 numbering.py (Phase 1) is built. pricing.py (Phase 2.5):
+                 `price_order()`, a pure Decimal function, no DB access —
+                 CGST/SGST vs IGST from origin state vs place-of-supply,
+                 line + pro-rata header discounts applied before tax
+                 (Sec 15(3) CGST Act), cess, HSN-wise summary grouped by
+                 (hsn_code, gst_rate), rupee-rounding with an explicit
+                 round_off (Rule 46(r) / e-invoice RndOffAmt). Symmetric,
+                 so both sales.py (O2C) and procurement.py (P2P) call it.
+                 inventory/sales/procurement/matching land later in Phase 2
   workers/       background jobs (arq/celery — not yet built)
   ai/            document extraction, prompts, eval harness (Phase 4)
   integrations/  gst/, razorpay/, whatsapp/, storage/ (Phase 4-5)
@@ -150,6 +157,12 @@ code, etc.) must generate a fresh value per run (e.g. a `uuid.uuid4().hex`
 suffix) rather than a fixed literal — a fixed literal passes the first
 time but then permanently 409s on every later run once that row exists.
 `tests/test_master_data_api.py` is the pattern to copy.
+
+Not every `services/` module needs Neon, though: a pure-logic module with
+no DB access (pricing.py) gets plain synchronous `pytest` tests — no
+`async def`, no fixtures, no `asyncio_mode` involved. `tests/test_pricing.py`
+is the pattern to copy for the next pure-calculation module; reach for the
+Neon-backed pattern below only once a service actually touches the database.
 
 `tests/test_numbering.py::test_numbering_gapless_under_concurrency` is the
 pattern to copy for anything claiming to be concurrency-safe: spin up N
