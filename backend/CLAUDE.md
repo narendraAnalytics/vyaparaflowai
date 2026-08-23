@@ -77,7 +77,21 @@ app/
                  (hsn_code, gst_rate), rupee-rounding with an explicit
                  round_off (Rule 46(r) / e-invoice RndOffAmt). Symmetric,
                  so both sales.py (O2C) and procurement.py (P2P) call it.
-                 inventory/sales/procurement/matching land later in Phase 2
+                 inventory.py (Phase 2.6): the sole place on_hand/reserved
+                 change. reserve/release/receive/issue/adjust each take a
+                 LIST of lines (a whole order/GRN/delivery/stock-take),
+                 sorted by (product_id, warehouse_id) before applying —
+                 deadlock avoidance when one transaction locks multiple
+                 inventory_items rows. Each line is one atomic
+                 `UPDATE ... WHERE <availability guard> RETURNING` (no
+                 explicit SELECT FOR UPDATE needed — Postgres locks the row
+                 for the statement's duration and the WHERE guard makes
+                 overselling structurally impossible), plus one append-only
+                 stock_ledger row per line in the same transaction. Callers
+                 own commit/rollback (this module never commits, same as
+                 numbering.py) — mutations raise ConflictError and leave no
+                 partial state on the first line that fails its guard.
+                 sales.py/procurement.py/matching.py land later in Phase 2
   workers/       background jobs (arq/celery — not yet built)
   ai/            document extraction, prompts, eval harness (Phase 4)
   integrations/  gst/, razorpay/, whatsapp/, storage/ (Phase 4-5)
@@ -173,3 +187,15 @@ Assertions here should verify actual system state (a real HTTP response
 body, a real Postgres row, a set of allocated numbers with no gaps), not
 just "no exception was raised" — see the Phase 0 health-check bugs and the
 Phase 1 seed-script mypy issues, both of which were only caught this way.
+
+For higher concurrency counts, the shared app engine's default pool (5 +
+10 overflow = 15 connections) isn't enough — most of N=100 "concurrent"
+tasks would just queue behind a handful of real connections and never
+actually overlap in Postgres, giving a false pass that looks like correct
+serialization but never tests real row-lock contention (a documented
+asyncpg/psycopg gotcha, not specific to this repo).
+`tests/test_inventory.py::test_100_concurrent_reservations_never_oversell`
+is the pattern to copy for this: build a dedicated
+`create_async_engine(..., pool_size=100, max_overflow=0)` local to that one
+test (dispose it in a `finally`) so all N tasks can genuinely hold open
+connections at once, rather than reusing `AsyncSessionLocal`.

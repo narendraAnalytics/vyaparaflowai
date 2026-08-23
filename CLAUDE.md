@@ -66,13 +66,17 @@ discounts, cess, rounding, HSN-wise summary, all pure functions on
 
 **Inventory and money only change through an append-only ledger row inside
 a database transaction** (`stock_ledger`, `ledger_entries`). No direct
-`UPDATE` to a quantity or balance column — enforced by convention today
-(Phase 1 schema, docstrings on the models), will be enforced in code once
-`services/inventory.py` exists (Phase 2). `inventory_items.available` is a
-real Postgres `GENERATED` column (`on_hand - reserved`), not app-computed —
-don't try to set it directly. This is load-bearing for the three-way-match
-and reconciliation logic later in the roadmap — don't bypass it for a
-"quick" write.
+`UPDATE` to a quantity or balance column — enforced in code as of Phase 2.6
+for inventory (`backend/app/services/inventory.py` is the only code
+allowed to touch `inventory_items.on_hand`/`reserved`; every mutation is
+one atomic `UPDATE ... WHERE <guard> RETURNING` plus a `stock_ledger` row
+in the same transaction — nothing else should write those columns). The
+equivalent for `ledger_entries` (money) is still just convention pending a
+`services/` module. `inventory_items.available` is a real Postgres
+`GENERATED` column (`on_hand - reserved`), not app-computed — don't try to
+set it directly. This is load-bearing for the three-way-match and
+reconciliation logic later in the roadmap — don't bypass it for a "quick"
+write.
 
 **Document numbers (`PO-2026-00001` etc.) are gapless and concurrency-safe**
 via `backend/app/services/numbering.py` — one atomic `UPDATE ...
