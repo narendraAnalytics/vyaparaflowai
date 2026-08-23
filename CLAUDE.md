@@ -70,9 +70,12 @@ integration layer only — webhooks, notifications, approval routing. Every
 rule (pricing, GST, inventory reservation, three-way match, reorder
 quantity) lives in `backend/app/services/` and n8n calls it over HTTP.
 GST/pricing (`services/pricing.py`, 2.5), inventory movements
-(`services/inventory.py`, 2.6), and sales (`services/sales.py`, 2.7 —
-binding orders, non-binding quotations confirmed later, and direct
-walk-in counter sales) are built; procurement/matching are next.
+(`services/inventory.py`, 2.6), sales (`services/sales.py`, 2.7 — binding
+orders, non-binding quotations confirmed later, and direct walk-in counter
+sales), and procurement (`services/procurement.py`, 2.8 — shortage
+detection, an explainable reorder-quantity calculator, a scored supplier
+selection, and requisition -> PO creation) are built; the three-way match
+(matching.py) is next.
 
 **Inventory and money only change through an append-only ledger row inside
 a database transaction** (`stock_ledger`, `ledger_entries`). No direct

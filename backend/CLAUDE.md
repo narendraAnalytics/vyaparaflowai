@@ -97,7 +97,16 @@ app/
                  sale with nothing reserved (decreases on_hand only,
                  guarded by on_hand>=qty) — same StockMovementType.ISSUE
                  ledger entry either way, added for sales.py's counter-sale
-                 flow (Phase 2.7).
+                 flow (Phase 2.7). Also (Phase 2.8): read-only
+                 `get_snapshot()`/`list_below_reorder_level()` (on_hand/
+                 reserved/available/reorder_level/safety_stock, the latter
+                 scoped by org+warehouse for shortage scans) and
+                 `average_daily_issued()` (stock_ledger ISSUE rows over a
+                 trailing window) — procurement.py builds its shortage
+                 detection and reorder-quantity calculator on these rather
+                 than querying inventory_items/stock_ledger directly, so
+                 this module stays the sole read/write gateway to both
+                 tables.
                  sales.py (Phase 2.7): `create_sales_order()` — validates
                  customer/warehouse/products, prices via pricing.py (org
                  state = origin, customer state = place of supply), checks
@@ -123,7 +132,31 @@ app/
                  `inventory.issue(..., from_reservation=False)` (decreases
                  on_hand only, no prior reservation required — see
                  inventory.py above).
-                 procurement.py/matching.py land later in Phase 2
+                 procurement.py (Phase 2.8): shortage -> requisition -> PO.
+                 detect_shortages() (proactive, below reorder_level) and
+                 detect_shortage_from_sales_order() (reactive, an order's
+                 unfulfilled lines) both read-only and both attach a
+                 recommended_qty via reorder_quantity() — pure function,
+                 shortage + avg_daily_sales*lead_time_days + safety_stock
+                 (avg_daily_sales from new inventory.average_daily_issued(),
+                 stock_ledger ISSUE rows over a trailing window). MOQ
+                 rounding is NOT in reorder_quantity() — a requisition is
+                 an internal need; MOQ only applies once a supplier is
+                 picked. score_suppliers() ranks candidates 0-100
+                 (price 40% + lead time 25% + reliability 35% + preferred
+                 bonus) with a human-readable `reasoning` list per
+                 supplier — "last price change" is explicitly NOT scored,
+                 documented inline as to why (no price-history table in
+                 the Phase 1 schema). create_requisition() persists
+                 status=PENDING_APPROVAL (nothing moves it further yet —
+                 approvals.py, 2.11, doesn't exist). create_purchase_
+                 orders_from_requisition() groups lines by best-scored
+                 supplier (one PO per supplier), rounds each line to that
+                 supplier's MOQ, prices via pricing.py (supplier state =
+                 origin, org state = place of supply — P2P mirror of
+                 sales.py's O2C direction), and marks the requisition
+                 CONVERTED.
+                 matching.py lands later in Phase 2
   workers/       background jobs (arq/celery — not yet built)
   ai/            document extraction, prompts, eval harness (Phase 4)
   integrations/  gst/, razorpay/, whatsapp/, storage/ (Phase 4-5)
