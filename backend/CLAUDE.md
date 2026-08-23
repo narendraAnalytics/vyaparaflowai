@@ -91,6 +91,13 @@ app/
                  own commit/rollback (this module never commits, same as
                  numbering.py) — mutations raise ConflictError and leave no
                  partial state on the first line that fails its guard.
+                 `issue(..., from_reservation=True|False)`: True (default)
+                 dispatches against a prior reservation (decreases on_hand
+                 AND reserved, guarded by reserved>=qty); False is a direct
+                 sale with nothing reserved (decreases on_hand only,
+                 guarded by on_hand>=qty) — same StockMovementType.ISSUE
+                 ledger entry either way, added for sales.py's counter-sale
+                 flow (Phase 2.7).
                  sales.py (Phase 2.7): `create_sales_order()` — validates
                  customer/warehouse/products, prices via pricing.py (org
                  state = origin, customer state = place of supply), checks
@@ -103,7 +110,19 @@ app/
                  0<=reserved_qty<=quantity, exists for exactly this).
                  Resulting status is RESERVED/PARTIALLY_RESERVED/CONFIRMED;
                  turning a shortage into a PR is procurement.py's job
-                 (2.8), not this module's.
+                 (2.8), not this module's. Also: `create_sales_order(...,
+                 is_quote=True)` / `confirm_sales_order()` — a quotation
+                 reuses `status=DRAFT` rather than a new table (Odoo does
+                 the same — a quotation IS a draft Sales Order, not a
+                 separate object); a quote skips inventory entirely and
+                 confirm() later reserves at the price locked in at quote
+                 time. And `create_counter_sale()` — walk-in/till flow,
+                 skips SO+Delivery, creates a customer_invoice directly
+                 (`sales_order_id` is nullable for exactly this), reduces
+                 stock immediately and all-or-nothing via
+                 `inventory.issue(..., from_reservation=False)` (decreases
+                 on_hand only, no prior reservation required — see
+                 inventory.py above).
                  procurement.py/matching.py land later in Phase 2
   workers/       background jobs (arq/celery — not yet built)
   ai/            document extraction, prompts, eval harness (Phase 4)

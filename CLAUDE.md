@@ -14,6 +14,15 @@ order, invoices the customer with a GST e-Invoice (IRN + QR), and
 reconciles the incoming UPI payment — with a human in the loop wherever
 money or irreversible decisions are involved.
 
+**This is a focused hardware-retail "mini ERP"** (Sales + Purchase +
+Inventory + Finance) with n8n automation and AI built in — not an n8n
+integration demo with a database attached, and not an attempt to clone
+Odoo/ERPNext. Payroll, HR, manufacturing/BOM, CRM, project management,
+fixed assets, a full general-ledger accounting suite, employee expenses,
+and fleet management are permanently out of scope — see roadmap.txt's "ERP
+POSITIONING" block for the full rationale. The ERP (Postgres, via FastAPI
+services) owns the state; n8n reacts to it.
+
 - `roadmap.txt` (gitignored, local-only) is the authoritative phase-by-phase
   build plan — work through it phase by phase, don't jump ahead. Phases 0
   (foundation) and 1 (domain model + seed data) are done; Phase 2 (FastAPI
@@ -61,9 +70,9 @@ integration layer only — webhooks, notifications, approval routing. Every
 rule (pricing, GST, inventory reservation, three-way match, reorder
 quantity) lives in `backend/app/services/` and n8n calls it over HTTP.
 GST/pricing (`services/pricing.py`, 2.5), inventory movements
-(`services/inventory.py`, 2.6), and sales order creation
-(`services/sales.py`, 2.7 — validate, price, credit-check, best-effort
-reserve stock) are built; procurement/matching are next.
+(`services/inventory.py`, 2.6), and sales (`services/sales.py`, 2.7 —
+binding orders, non-binding quotations confirmed later, and direct
+walk-in counter sales) are built; procurement/matching are next.
 
 **Inventory and money only change through an append-only ledger row inside
 a database transaction** (`stock_ledger`, `ledger_entries`). No direct
