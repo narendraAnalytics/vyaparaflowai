@@ -91,7 +91,20 @@ app/
                  own commit/rollback (this module never commits, same as
                  numbering.py) — mutations raise ConflictError and leave no
                  partial state on the first line that fails its guard.
-                 sales.py/procurement.py/matching.py land later in Phase 2
+                 sales.py (Phase 2.7): `create_sales_order()` — validates
+                 customer/warehouse/products, prices via pricing.py (org
+                 state = origin, customer state = place of supply), checks
+                 credit (unpaid customer_invoices + this order vs
+                 credit_limit) BEFORE allocating a document number or
+                 persisting anything, then best-effort reserves stock per
+                 line via inventory.py (try full qty, fall back to what's
+                 actually available, record the shortage —
+                 sales_order_items.reserved_qty's CHECK constraint,
+                 0<=reserved_qty<=quantity, exists for exactly this).
+                 Resulting status is RESERVED/PARTIALLY_RESERVED/CONFIRMED;
+                 turning a shortage into a PR is procurement.py's job
+                 (2.8), not this module's.
+                 procurement.py/matching.py land later in Phase 2
   workers/       background jobs (arq/celery — not yet built)
   ai/            document extraction, prompts, eval harness (Phase 4)
   integrations/  gst/, razorpay/, whatsapp/, storage/ (Phase 4-5)

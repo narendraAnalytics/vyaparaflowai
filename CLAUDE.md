@@ -60,9 +60,10 @@ Next.js 16 (dashboard)
 integration layer only — webhooks, notifications, approval routing. Every
 rule (pricing, GST, inventory reservation, three-way match, reorder
 quantity) lives in `backend/app/services/` and n8n calls it over HTTP.
-GST/pricing is built (`services/pricing.py`, Phase 2.5) — CGST/SGST/IGST,
-discounts, cess, rounding, HSN-wise summary, all pure functions on
-`Decimal`, no DB access; inventory/sales/procurement/matching are next.
+GST/pricing (`services/pricing.py`, 2.5), inventory movements
+(`services/inventory.py`, 2.6), and sales order creation
+(`services/sales.py`, 2.7 — validate, price, credit-check, best-effort
+reserve stock) are built; procurement/matching are next.
 
 **Inventory and money only change through an append-only ledger row inside
 a database transaction** (`stock_ledger`, `ledger_entries`). No direct
