@@ -217,6 +217,43 @@ app/
                  fully paid, documented rather than silently
                  inconsistent with the customer side), outstanding_
                  balance() and aging_report() are read-only.
+                 approvals.py (Phase 2.11): the approval chain -
+                 polymorphic on entity_type/entity_id (approvals table),
+                 same pattern as audit_logs/workflow_events - this module
+                 never interprets what the entity actually is.
+                 determine_approval_chain() is a pure function: amount >
+                 Rs.10,000 -> Manager level, > Rs.1,00,000 -> +Owner
+                 level, category=="capital" -> Owner regardless of
+                 amount, supplier_risk_score >= 60 -> Owner (matches
+                 matching.py's own BLOCK threshold), >= 20 -> Manager
+                 (matches matching.py's REVIEW threshold) - every
+                 triggered rule adds a reasoning line, same convention as
+                 procurement.py's SupplierScore.reasoning. create_
+                 approval_chain() persists one Approval row per level,
+                 all PENDING from creation; decide_approval() blocks
+                 approving level N until every level < N is APPROVED
+                 (enforced in application code, no DB status for
+                 "waiting") and rejecting one level cascades to auto-
+                 reject every other still-open level of the same chain.
+                 No required_role column was added - role is returned in
+                 CreateApprovalChainResult and written into the row's
+                 comment, documented as a deliberate non-migration (same
+                 call procurement.py made about not gating PO creation on
+                 approval before this module existed). RBAC (does the
+                 acting approver hold the required role) is explicitly
+                 NOT checked in this module - that's the API layer's job
+                 (require_role/require_perm), matching every other
+                 services/ module. delegate_approval() flips the original
+                 row to DELEGATED (terminal audit record) and creates a
+                 fresh PENDING row at the same level for the new approver
+                 (no self-referential FK, so each row's comment cross-
+                 references the other). escalate_overdue_approvals()
+                 flips PENDING rows past their sla_due_at to ESCALATED,
+                 best-effort reassigning approver_id to an active
+                 Owner-role user for the org - notifying anyone is
+                 Phase 3's job (n8n). get_approval_chain_status() is a
+                 read-only rollup (no_chain/pending/approved/rejected) a
+                 future caller can gate on.
   workers/       background jobs (arq/celery — not yet built)
   ai/            document extraction, prompts, eval harness (Phase 4)
   integrations/  gst/, razorpay/, whatsapp/, storage/ (Phase 4-5)
