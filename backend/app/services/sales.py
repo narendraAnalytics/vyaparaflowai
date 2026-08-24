@@ -80,6 +80,7 @@ from app.db.models.sales import (
 )
 from app.services import inventory
 from app.services.numbering import next_document_number
+from app.services.outbox import write_event
 from app.services.pricing import PricingLineInput, PricingLineResult, PricingResult, price_order
 
 ZERO = Decimal("0")
@@ -420,6 +421,25 @@ async def create_sales_order(
             line_results.append(_line_result(priced_line, reserved_qty))
         _finalize_status(sales_order, line_results)
 
+    has_shortage = any(line.shortage_qty > ZERO for line in line_results)
+    # A DRAFT (quote) order's has_shortage is structurally always True
+    # (inventory is skipped entirely) but nothing has been committed to
+    # yet - see the module docstring. Only a real, non-quote shortage is
+    # an outbox-worthy fact WF-02 should act on.
+    if not request.is_quote and has_shortage:
+        await write_event(
+            session,
+            aggregate_type="sales_order",
+            aggregate_id=sales_order.id,
+            event_type="shortage.detected",
+            payload={
+                "org_id": str(org_id),
+                "sales_order_id": str(sales_order.id),
+                "order_number": order_number,
+                "warehouse_id": str(request.warehouse_id),
+            },
+        )
+
     await session.flush()
 
     return CreateSalesOrderResult(
@@ -430,7 +450,7 @@ async def create_sales_order(
         tax_total=priced.tax_total,
         total=priced.grand_total,
         lines=line_results,
-        has_shortage=any(line.shortage_qty > ZERO for line in line_results),
+        has_shortage=has_shortage,
     )
 
 
@@ -494,6 +514,24 @@ async def confirm_sales_order(
         )
 
     _finalize_status(sales_order, line_results)
+
+    has_shortage = any(line.shortage_qty > ZERO for line in line_results)
+    # Unlike create_sales_order()'s DRAFT case, confirming IS the moment
+    # this order becomes binding - a real shortage here is outbox-worthy.
+    if has_shortage:
+        await write_event(
+            session,
+            aggregate_type="sales_order",
+            aggregate_id=sales_order.id,
+            event_type="shortage.detected",
+            payload={
+                "org_id": str(org_id),
+                "sales_order_id": str(sales_order.id),
+                "order_number": sales_order.order_number,
+                "warehouse_id": str(warehouse_id),
+            },
+        )
+
     await session.flush()
 
     return CreateSalesOrderResult(
@@ -504,7 +542,7 @@ async def confirm_sales_order(
         tax_total=sales_order.tax_total,
         total=sales_order.total,
         lines=line_results,
-        has_shortage=any(line.shortage_qty > ZERO for line in line_results),
+        has_shortage=has_shortage,
     )
 
 

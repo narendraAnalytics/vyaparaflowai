@@ -25,6 +25,20 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "Accounts": frozenset(
         {"payment.record", "invoice.create", "supplier_invoice.create", "supplier_invoice.match"}
     ),
+    # n8n's fixed automation identity (Phase 3.2) — least-privilege: only
+    # the writes the orchestration workflows actually call, never
+    # customer/supplier/product management or approval-bypassing power.
+    "Automation": frozenset(
+        {
+            "sales_order.create",
+            "po.create",
+            "goods_receipt.create",
+            "supplier_invoice.create",
+            "supplier_invoice.match",
+            "payment.record",
+            "approval.manage",
+        }
+    ),
 }
 
 

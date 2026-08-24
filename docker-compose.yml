@@ -1,5 +1,46 @@
 name: vyaparaflow-ai
 
+x-n8n-common: &n8n-common
+  image: docker.n8n.io/n8nio/n8n:2.22.6
+  environment:
+    N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+    DB_TYPE: postgresdb
+    DB_POSTGRESDB_HOST: n8n-postgres
+    DB_POSTGRESDB_PORT: 5432
+    DB_POSTGRESDB_DATABASE: n8n
+    DB_POSTGRESDB_USER: n8n
+    DB_POSTGRESDB_PASSWORD: ${N8N_POSTGRES_PASSWORD}
+    EXECUTIONS_MODE: queue
+    QUEUE_BULL_REDIS_HOST: ${N8N_REDIS_HOST}
+    QUEUE_BULL_REDIS_PORT: ${N8N_REDIS_PORT}
+    QUEUE_BULL_REDIS_USERNAME: ${N8N_REDIS_USERNAME}
+    QUEUE_BULL_REDIS_PASSWORD: ${N8N_REDIS_PASSWORD}
+    QUEUE_BULL_REDIS_TLS: "true"
+    GENERIC_TIMEZONE: Asia/Kolkata
+    N8N_HOST: localhost
+    N8N_PROTOCOL: http
+    # All webhooks are served by the dedicated webhook processor (below),
+    # not by main — this is the URL n8n shows/builds webhook links from,
+    # AND the base for any callback URL n8n hands to a third party (e.g.
+    # Telegram's sendAndWait inline-button resume link — Telegram rejects
+    # "localhost" outright, so local dev needs a real public tunnel here;
+    # ${N8N_WEBHOOK_PUBLIC_URL} is the ngrok URL from `ngrok http 5679`,
+    # changes on every ngrok restart, see .env.example).
+    WEBHOOK_URL: ${N8N_WEBHOOK_PUBLIC_URL:-http://localhost:5679/}
+    N8N_BASIC_AUTH_ACTIVE: "true"
+    N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
+    N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+  depends_on:
+    n8n-postgres:
+      condition: service_healthy
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5678/healthz || exit 1"]
+    interval: 5s
+    timeout: 5s
+    retries: 12
+    start_period: 20s
+
 services:
   minio:
     image: minio/minio:latest
@@ -33,22 +74,61 @@ services:
           path: ./backend/app
           target: /app/app
 
-  n8n:
-    image: docker.n8n.io/n8nio/n8n:latest
+  # n8n's OWN Postgres — deliberately separate from the app's Neon DB
+  # (separate schemas, separate blast radius; see roadmap.txt 3.1).
+  n8n-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: ${N8N_POSTGRES_PASSWORD}
+      POSTGRES_DB: n8n
+    volumes:
+      - n8n_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n -d n8n"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Editor UI + REST API (n8n-mcp talks to this one).
+  n8n-main:
+    <<: *n8n-common
+    container_name: vyaparaflow-n8n-main
+    command: ["start"]
     ports:
       - "5678:5678"
-    environment:
-      N8N_HOST: localhost
-      N8N_PORT: 5678
-      N8N_PROTOCOL: http
-      WEBHOOK_URL: http://localhost:5678/
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-dev-only-change-in-prod}
-      GENERIC_TIMEZONE: Asia/Kolkata
-    volumes:
-      - n8n_data:/home/node/.n8n
+
+  # Executes queued workflow runs. No inbound port — pulls jobs from Redis.
+  n8n-worker:
+    <<: *n8n-common
+    container_name: vyaparaflow-n8n-worker
+    command: ["worker"]
     depends_on:
-      - backend
+      n8n-postgres:
+        condition: service_healthy
+      n8n-main:
+        condition: service_healthy
+    # The worker's own health surface isn't on :5678/healthz like
+    # main/webhook (it runs an internal task-broker port instead) — the
+    # shared healthcheck would just spin to "unhealthy" against the wrong
+    # port. Nothing depends_on the worker's health, so disable it here.
+    healthcheck:
+      disable: true
+
+  # Dedicated webhook receiver — kept off the main process so a slow/blocked
+  # workflow run never delays webhook acknowledgment.
+  n8n-webhook:
+    <<: *n8n-common
+    container_name: vyaparaflow-n8n-webhook
+    command: ["webhook"]
+    ports:
+      - "5679:5678"
+    depends_on:
+      n8n-postgres:
+        condition: service_healthy
+      n8n-main:
+        condition: service_healthy
 
 volumes:
   minio_data:
-  n8n_data:
+  n8n_postgres_data:

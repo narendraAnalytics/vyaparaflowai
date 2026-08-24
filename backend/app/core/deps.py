@@ -25,10 +25,46 @@ bearer_scheme = HTTPBearer(auto_error=False)
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
+AUTOMATION_ROLE_NAME = "Automation"
+
+
+async def _resolve_automation_user(org_id: uuid.UUID, db: AsyncSession) -> User:
+    """The fixed, least-privilege identity n8n calls the API as.
+
+    Resolved fresh per request (same as a human user's roles) so a role
+    change or deactivation of this account takes effect immediately -
+    not read from a cached claim.
+    """
+    user = (
+        await db.execute(
+            select(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(
+                User.org_id == org_id,
+                Role.name == AUTOMATION_ROLE_NAME,
+                User.is_active.is_(True),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if user is None:
+        raise Unauthorized("no automation identity configured for this organization")
+    return user
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),  # noqa: B008
+    api_key: str | None = Depends(api_key_header),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> User:
+    # X-API-Key takes precedence when present - this is how n8n calls in,
+    # never impersonating a real human JWT. Still resolves to a real User
+    # row with real roles, so require_role/require_perm below apply
+    # identically - the API-key path never bypasses RBAC.
+    if api_key is not None:
+        org_id = await get_api_key_org(api_key=api_key, db=db)
+        return await _resolve_automation_user(org_id, db)
     if credentials is None:
         raise Unauthorized("missing bearer token")
     settings = get_settings()

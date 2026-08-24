@@ -75,6 +75,7 @@ from app.db.models.purchase import (
 from app.db.models.sales import SalesOrder, SalesOrderItem
 from app.services import inventory
 from app.services.numbering import next_document_number
+from app.services.outbox import write_event
 from app.services.pricing import PricingLineInput, price_order
 
 ZERO = Decimal("0")
@@ -417,6 +418,24 @@ async def create_requisition(
             )
         )
     await session.flush()
+
+    # WF-03 "Purchase Order Approval" (roadmap.txt 3.6) is the consumer -
+    # payload deliberately carries no money amount: a requisition has no
+    # price yet (MOQ/supplier/price are chosen at PO creation, #4 above),
+    # so the workflow converts to PO(s) itself and runs approval on each
+    # PO's real total, same "outbox payload is never the source of truth
+    # for numbers that can go stale" convention as shortage.detected.
+    await write_event(
+        session,
+        aggregate_type="purchase_requisition",
+        aggregate_id=requisition.id,
+        event_type="purchase_requisition.created",
+        payload={
+            "org_id": str(org_id),
+            "purchase_requisition_id": str(requisition.id),
+            "requisition_number": requisition_number,
+        },
+    )
 
     return CreateRequisitionResult(
         purchase_requisition_id=requisition.id,

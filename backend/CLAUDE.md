@@ -32,6 +32,20 @@ uv run python -m app.db.seed             # seed demo data      (make seed)
 **Do not run `uvicorn app.main:app` or `fastapi dev` directly on Windows** —
 see the winloop note below. Always use `make dev` / `python -m app.dev`.
 
+**`make dev`'s WatchFiles auto-reload is not reliable on this Windows setup**
+(found 2026-08-24 while wiring `services/outbox.py`'s `write_event()` into
+`sales.py`): it logs `WatchFiles detected changes in '...'. Reloading...`
+but does not always actually restart the worker process — the server keeps
+responding 200 to requests while silently still running the OLD code, with
+no error or warning. Caught only because a DB row the new code should have
+written never appeared after two full request cycles against a "reloaded"
+server. If a code change doesn't seem to be taking effect and there's no
+obvious reason why, don't trust "the server is still responding" as proof
+the reload worked — kill the process (`taskkill /PID <pid> /F` for both the
+reloader and worker PIDs, `netstat -ano | grep :8000` to find them) and
+start a fresh `python -m app.dev` before concluding the code itself is
+wrong.
+
 ## Environment
 
 Copy `.env.example` to `.env` and fill in real values (`.env` is
@@ -41,6 +55,20 @@ gitignored, never commit it). Required: `DATABASE_URL` and
 all three as required with no fallback — a missing/misconfigured value
 fails fast at startup rather than silently trying to reach a local
 container that doesn't exist in this project.
+
+`N8N_API_KEY` is now set for real (2026-08-24) but **not yet wired into
+any route** — `app/core/deps.py::get_api_key_org` checks it and resolves
+an org id, but every router still only accepts `require_perm`/
+`get_current_user` (a human JWT). Next session's first real code task
+(roadmap.txt Phase 3.2): add an auth dependency that accepts EITHER a
+valid JWT OR a valid `X-API-Key`, mapped to a fixed least-privilege
+"automation" identity that still goes through the normal RBAC checks —
+don't let the API-key path bypass permissions. Do this before wiring any
+n8n workflow to call the API. `N8N_WEBHOOK_URL`/`N8N_WEBHOOK_SECRET`
+stay empty until the receiving n8n workflow (WF-02, Phase 3) exists.
+Telegram's bot token/chat id are deliberately NOT read from here — they
+belong in n8n's own credential store (Phase 3.3), not the backend's env;
+`.env` only carries a comment with the values as a reminder.
 
 ## Architecture
 
@@ -307,13 +335,24 @@ app/
                  matched/blocked.
                  outbox.py (Phase 2.12): write_event() - the write side of
                  the transactional outbox, one-line helper, never commits.
-                 Not wired into any existing service yet - each Phase 3
-                 n8n workflow needs a specific event_type/payload shape,
-                 and inventing those now with no consumer to verify
-                 against would be premature (same call procurement.py
-                 made about approval gating). Payload convention: always
+                 Wired in as of Phase 3.5/3.6: sales.py's
+                 create_sales_order()/confirm_sales_order() fire
+                 shortage.detected on a real (non-quote) shortage;
+                 procurement.py's create_requisition() fires
+                 purchase_requisition.created. Both payloads deliberately
+                 carry only IDs, never money/quantity numbers - the
+                 consuming n8n workflow always re-fetches live state
+                 rather than trusting a payload that can go stale before
+                 an async worker processes it. Payload convention: always
                  include org_id in the dict, since outbox_events has no
                  org_id column of its own.
+                 CAUTION: running a full pytest suite for a service with
+                 write_event() wired in (e.g. `pytest tests/
+                 test_procurement.py`) live-fires real outbox events for
+                 every test-created row. If outbox_publisher runs
+                 afterward, those reach n8n for real - expect Telegram/
+                 notification noise from test data, not just your own
+                 manual test calls.
   workers/       background jobs (arq/celery — not yet built), except
                  outbox_publisher.py (Phase 2.12) - the read/publish side
                  of the transactional outbox. Unlike services/, this

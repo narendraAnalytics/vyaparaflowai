@@ -21,7 +21,10 @@ random.seed(20260822)  # reproducible seed data across runs
 
 ORG_NAME = "Sri Lakshmi Hardware & Electricals"
 DEMO_USER_PASSWORD = "Passw0rd!2026"
-ROLE_NAMES = ["Owner", "Manager", "Sales", "Warehouse", "Accounts"]
+ROLE_NAMES = ["Owner", "Manager", "Sales", "Warehouse", "Accounts", "Automation"]
+# Fixed n8n identity (Phase 3.2) — resolved from X-API-Key, never logs in
+# with a password. Distinct from the human demo users below.
+AUTOMATION_USER_EMAIL = "automation@srilakshmi.example.com"
 
 # (name, gstin, state_code, lead_time_days, reliability_score, category)
 SUPPLIERS: list[tuple[str, str, str, int, int, str]] = [
@@ -630,7 +633,12 @@ async def seed() -> None:
         print(f"roles: {len(roles)}")
 
         for role_name in ROLE_NAMES:
-            email = f"{role_name.lower()}@srilakshmi.example.com"
+            is_automation = role_name == "Automation"
+            email = (
+                AUTOMATION_USER_EMAIL
+                if is_automation
+                else f"{role_name.lower()}@srilakshmi.example.com"
+            )
             existing_user = (
                 await session.execute(
                     select(User).where(User.org_id == org.id, User.email == email)
@@ -640,13 +648,15 @@ async def seed() -> None:
                 existing_user = User(
                     org_id=org.id,
                     email=email,
-                    full_name=f"Demo {role_name}",
-                    hashed_password=hash_secret(DEMO_USER_PASSWORD),
+                    full_name="n8n Automation" if is_automation else f"Demo {role_name}",
+                    # No password — this identity only ever authenticates via
+                    # X-API-Key (app/core/deps.py), never a JWT login.
+                    hashed_password=None if is_automation else hash_secret(DEMO_USER_PASSWORD),
                 )
                 session.add(existing_user)
                 await session.flush()
                 session.add(UserRole(user_id=existing_user.id, role_id=roles[role_name].id))
-        print("demo users: 5 (one per role)")
+        print(f"demo users: {len(ROLE_NAMES)} (one per role, incl. the Automation identity)")
 
         suppliers: list[Supplier] = []
         for sup_name, gstin, state_code, lead_time, reliability, _category in SUPPLIERS:

@@ -28,7 +28,27 @@ services) owns the state; n8n reacts to it.
   (foundation) and 1 (domain model + seed data) are done; Phase 2 (FastAPI
   business logic) is done, including the goods-receipt/supplier-invoice
   intake endpoints that closed its last Definition-of-Done gap; Phase 3
-  (n8n workflows) is next.
+  (n8n workflows) is in progress — 3.1–3.6 done (n8n queue-mode Docker
+  Compose stack; backend `X-API-Key`-or-JWT auth; n8n credentials; WF-01
+  Sales Order Intake, WF-02 Inventory Shortage Router, WF-03 Purchase
+  Order Approval — all built AND verified against real infra, including a
+  real human Telegram-approval click resuming a paused workflow via
+  ngrok). **Next session starts at roadmap.txt 3.7** (WF-04 Send PO to
+  Supplier). Phase 3 was enhanced 2026-08-24
+  against current n8n production guidance and a review of `backend/.env`;
+  locked-in decisions worth knowing before touching it: Telegram (not
+  WhatsApp/Slack) is the channel for internal approvals/alerts (WF-03,
+  WF-99) — free, no Meta review, native n8n inline-button support; Slack
+  is dropped for now (re-add only if a real need shows up); WhatsApp for
+  the customer-facing leg (WF-06) is deliberately LAST, added once the
+  core flow works on email/Telegram alone, and will use **WasenderAPI**
+  (plain Bearer-token HTTP Request node, no native n8n node) instead of
+  the official WhatsApp Business Cloud API, chosen for zero Meta
+  verification overhead on a portfolio-sized project.
+  **Gmail → Resend, 2026-08-24**: outbound email (WF-04/WF-06) uses
+  Resend (Bearer-token HTTP Request, no OAuth), not Gmail — same
+  zero-verification-overhead reasoning as WasenderAPI. Gmail comes back
+  later, scoped only to Phase 4.3's inbound invoice-receiving trigger.
 - `docs/adr/` holds architecture decision records — read ADR 0001 before
   changing any part of the core stack.
 - `docs/er-diagram.md` has the full schema as Mermaid ERDs, grouped the
@@ -37,6 +57,16 @@ services) owns the state; n8n reacts to it.
 - `n8nworkflow.md` documents n8n operating lessons (how to edit workflows
   via n8n-mcp, common error patterns, verification method) carried over
   from a prior project — read it before touching any n8n workflow.
+  n8n queue-mode gotchas found 2026-08-24 (added to `n8nworkflow.md` too):
+  worker/webhook must `depends_on: n8n-main` with `condition:
+  service_healthy` (a real `/healthz` check), not `service_started` — all
+  three processes migrate the DB on boot and race if they start together.
+  A workflow calling another via Execute Sub-workflow must have that
+  sub-workflow ACTIVE, not just saved, before the caller can activate.
+  Telegram's Bot API rejects any inline-button URL whose host is
+  `localhost` — local testing of `sendAndWait` (or anything handing a
+  callback URL to a third party) needs a real tunnel (ngrok); see root
+  `.env`'s `N8N_WEBHOOK_PUBLIC_URL`.
 - `backend/CLAUDE.md` has backend-specific commands and conventions.
 
 ## Monorepo layout
@@ -57,7 +87,7 @@ Next.js 16 (dashboard)
         │
         ▼
       n8n  ──────────────►  external services
-   (orchestration,          (Gmail, Slack, WhatsApp,
+   (orchestration,          (Telegram, Resend, WhatsApp,
     queue mode, Phase 3)     Razorpay, GST IRP)
         │
         ▼  HTTP + Idempotency-Key
