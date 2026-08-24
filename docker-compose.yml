@@ -78,6 +78,7 @@ services:
   # (separate schemas, separate blast radius; see roadmap.txt 3.1).
   n8n-postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: n8n
       POSTGRES_PASSWORD: ${N8N_POSTGRES_PASSWORD}

@@ -67,6 +67,19 @@ services) owns the state; n8n reacts to it.
   `localhost` — local testing of `sendAndWait` (or anything handing a
   callback URL to a third party) needs a real tunnel (ngrok); see root
   `.env`'s `N8N_WEBHOOK_PUBLIC_URL`.
+- **Starting a new session, n8n side**: usually nothing to do — all four
+  n8n containers (`n8n-postgres`, `n8n-main`, `n8n-worker`, `n8n-webhook`)
+  have `restart: unless-stopped`, so they stay running (and self-heal on
+  a Docker Desktop restart/reboot) as long as Docker Desktop itself is
+  running. If Docker Desktop was closed, just reopen it — n8n-mcp
+  reconnects to the already-running instance. Two things are NOT
+  Dockerized and DO need a manual restart every session: the backend dev
+  server (`make dev` / `uv run python -m app.dev`, since n8n workflows
+  call it at `host.docker.internal:8000`) and, only if testing WF-03's
+  Telegram approval buttons, ngrok (`ngrok http 5679` — its URL changes
+  every restart, requiring an update to `.env`'s `N8N_WEBHOOK_PUBLIC_URL`
+  and a `docker compose up -d n8n-main n8n-worker n8n-webhook
+  --force-recreate`).
 - `backend/CLAUDE.md` has backend-specific commands and conventions.
 
 ## Monorepo layout
