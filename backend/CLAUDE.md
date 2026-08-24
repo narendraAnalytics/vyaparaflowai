@@ -156,7 +156,36 @@ app/
                  origin, org state = place of supply — P2P mirror of
                  sales.py's O2C direction), and marks the requisition
                  CONVERTED.
-                 matching.py lands later in Phase 2
+                 matching.py (Phase 2.9): the three-way match — PO vs
+                 Goods Receipt vs Supplier Invoice. Keyed on a specific
+                 (purchase_order_id, goods_receipt_id,
+                 supplier_invoice_id) triple, matching
+                 three_way_match_results' own NOT NULL FKs (one match run
+                 = one GRN against one PO and one invoice, not every GRN
+                 ever raised against a PO). Split like pricing.py:
+                 evaluate_three_way_match() is a pure function (no DB,
+                 table-driven-tested) and match_three_way() is the thin
+                 async wrapper that loads the three documents and
+                 persists one ThreeWayMatchResult row. Tolerances (qty
+                 +/-2%, price +/-1%, amount Rs.100) compare invoiced qty
+                 against the GRN's accepted_quantity (not received —
+                 rejected/damaged units were never really delivered).
+                 Verdict is AUTO_APPROVE/REVIEW/BLOCK: BLOCK is forced
+                 regardless of risk_score whenever a line is structurally
+                 unmatched (on only 1-2 of the 3 documents) or a
+                 duplicate invoice is suspected, since a score threshold
+                 alone could paper over documents that don't actually
+                 agree. risk_score (0-100) is explainable — every point
+                 traces to a reason code, same convention as
+                 procurement.py's SupplierScore.reasoning: structural
+                 mismatch, qty/price/amount variance, price spike (>3x
+                 tolerance), duplicate invoice, new supplier, round-
+                 number total, weekend submission. "Bank-detail change"
+                 is documented as NOT scored — supplier_invoices has no
+                 bank columns to compare against
+                 suppliers.bank_account_number/bank_ifsc, the same kind
+                 of Phase-1-schema gap procurement.py documented for
+                 "last price change".
   workers/       background jobs (arq/celery — not yet built)
   ai/            document extraction, prompts, eval harness (Phase 4)
   integrations/  gst/, razorpay/, whatsapp/, storage/ (Phase 4-5)
