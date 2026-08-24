@@ -139,6 +139,12 @@ class OutboxEvent(UUIDPkMixin, Base):
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Phase 2.12: when the most recent publish attempt happened — the
+    # exponential-backoff clock runs from this, not created_at, so a
+    # retry schedule reflects actual attempt history rather than just
+    # how old the event is. Nullable: never-attempted rows are always
+    # immediately eligible (see workers/outbox_publisher.py).
+    last_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

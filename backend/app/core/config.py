@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     redis_url: str = Field(alias="REDIS_URL")
 
     n8n_api_key: str = Field(default="", alias="N8N_API_KEY")
+    n8n_webhook_url: str = Field(default="", alias="N8N_WEBHOOK_URL")
+    n8n_webhook_secret: str = Field(default="", alias="N8N_WEBHOOK_SECRET")
     jwt_secret: str = Field(default="dev-secret-change-me", alias="JWT_SECRET")
     access_token_expires_minutes: int = Field(default=15, alias="ACCESS_TOKEN_EXPIRES_MINUTES")
     refresh_token_expires_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRES_DAYS")

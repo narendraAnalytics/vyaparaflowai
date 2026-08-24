@@ -254,7 +254,37 @@ app/
                  Phase 3's job (n8n). get_approval_chain_status() is a
                  read-only rollup (no_chain/pending/approved/rejected) a
                  future caller can gate on.
-  workers/       background jobs (arq/celery — not yet built)
+                 outbox.py (Phase 2.12): write_event() - the write side of
+                 the transactional outbox, one-line helper, never commits.
+                 Not wired into any existing service yet - each Phase 3
+                 n8n workflow needs a specific event_type/payload shape,
+                 and inventing those now with no consumer to verify
+                 against would be premature (same call procurement.py
+                 made about approval gating). Payload convention: always
+                 include org_id in the dict, since outbox_events has no
+                 org_id column of its own.
+  workers/       background jobs (arq/celery — not yet built), except
+                 outbox_publisher.py (Phase 2.12) - the read/publish side
+                 of the transactional outbox. Unlike services/, this
+                 module owns its own transactions and commits once per
+                 event (a crash mid-batch only loses the in-flight
+                 event's progress). compute_retry_decision() is a pure
+                 function: exponential backoff min(30s * 2^(attempts-1),
+                 3600s cap) computed from outbox_events.last_attempted_at
+                 (a Phase 2.12 migration - added because created_at alone
+                 can't drive a correct retry schedule); attempts>=8 is
+                 permanently exhausted (stops being retried, nothing
+                 deleted - a real dead-letter table + replay endpoint is
+                 Phase 8.5). publish_pending() POSTs every due event to a
+                 single N8N_WEBHOOK_URL (n8n branches internally on
+                 event_type) with an Idempotency-Key header (the event's
+                 own id, stable across retries) and an optional
+                 N8N_WEBHOOK_SECRET bearer token - both new empty-default
+                 Settings fields; run_once() no-ops if the URL isn't
+                 configured, since Phase 3 hasn't built the receiving
+                 workflow yet. Callable via `uv run python -m
+                 app.workers.outbox_publisher`; real scheduling (arq/cron)
+                 is a Phase 3+ decision.
   ai/            document extraction, prompts, eval harness (Phase 4)
   integrations/  gst/, razorpay/, whatsapp/, storage/ (Phase 4-5)
   main.py        FastAPI app, lifespan (owns the Redis client on
@@ -306,14 +336,16 @@ masked both this and the Windows event-loop bug.
 
 `alembic/env.py` overrides `sqlalchemy.url` from `DIRECT_DATABASE_URL` (not
 `DATABASE_URL`) at import time — DDL and advisory locks don't reliably work
-through Neon's pooler. `alembic/versions/` currently has two migrations:
-the initial 38-table schema, and a follow-up adding 9 partial indexes on
+through Neon's pooler. `alembic/versions/` currently has four migrations:
+the initial 38-table schema, a follow-up adding 9 partial indexes on
 hot status-filtered queries (approvals inbox, open POs, unpaid invoices,
-etc. — see `docs/er-diagram.md`'s "constraints worth calling out" section).
-Both were downgrade/upgrade round-trip tested for real against Neon before
-being considered done — `alembic downgrade base` really did drop all 38
-tables, not just "ran without error". Do the same for any new migration:
-`autogenerate` → review the diff → `upgrade head` → `downgrade -1` →
+etc. — see `docs/er-diagram.md`'s "constraints worth calling out" section),
+`refresh_tokens` (Phase 2.2 auth), and `outbox_events.last_attempted_at`
+(Phase 2.12, needed for exponential backoff to have a real clock to run
+from). Every one was downgrade/upgrade round-trip tested for real against
+Neon before being considered done — `alembic downgrade base` really did
+drop all 38 tables, not just "ran without error". Do the same for any new
+migration: `autogenerate` → review the diff → `upgrade head` → `downgrade -1` →
 `upgrade head` again, checking actual table/index state via the Neon MCP
 tools (`mcp__neon__run_sql`), not just Alembic's own exit code.
 
