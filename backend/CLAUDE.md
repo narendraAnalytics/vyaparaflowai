@@ -376,7 +376,33 @@ app/
                  app.workers.outbox_publisher`; real scheduling (arq/cron)
                  is a Phase 3+ decision.
   ai/            document extraction, prompts, eval harness (Phase 4)
-  integrations/  gst/, razorpay/, whatsapp/, storage/ (Phase 4-5)
+  integrations/  gst/, razorpay/, whatsapp/ (Phase 4-5); storage/
+                 minio_client.py (Phase 3.7) - boto3 S3-compatible client
+                 against docker-compose's minio service, bucket
+                 auto-created on first use. Deliberately the ONLY place
+                 that holds storage credentials - callers (services/
+                 procurement.py's generate_purchase_order_pdf()) get raw
+                 bytes back, never a credential, so n8n workflows never
+                 need their own MinIO creds either.
+  services/documents.py (Phase 3.7): render_purchase_order_pdf() - pure
+                 function (reportlab, no DB/HTTP I/O), same convention as
+                 pricing.py/matching.py. reportlab chosen over WeasyPrint
+                 specifically because it has no system-level deps (no
+                 Cairo/Pango) - matters for both Windows dev and Docker.
+  services/procurement.py also gained (Phase 3.7): mark_purchase_order_
+                 approved()/_rejected() - closing a real gap where
+                 PurchaseOrder.status was set to DRAFT at creation and
+                 NEVER updated afterward (approvals.py deliberately never
+                 touches the entity it approves - polymorphic by design -
+                 so nothing was syncing the outcome onto the PO itself
+                 until this). approved() fires a purchase_order.approved
+                 outbox event, same pattern as shortage.detected/
+                 purchase_requisition.created. generate_purchase_order_
+                 pdf() renders + uploads + persists a documents row (dedup
+                 by sha256 checksum) + sets pdf_storage_uri, returning raw
+                 PDF bytes so the API hands them straight back in one
+                 round-trip. mark_purchase_order_sent() is the final
+                 APPROVED -> SENT transition.
   main.py        FastAPI app, lifespan (owns the Redis client on
                  app.state.redis), request-id middleware, /health
   dev.py         local dev entrypoint — see winloop.py

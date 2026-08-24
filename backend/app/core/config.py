@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     rate_limit_login_per_minute: int = Field(default=10, alias="RATE_LIMIT_LOGIN_PER_MINUTE")
     cors_origins: list[str] = Field(default=["http://localhost:3000"], alias="CORS_ORIGINS")
 
+    # MinIO (S3-compatible object storage — docker-compose's `minio` service
+    # in dev). Defaults match docker-compose.yml's own MINIO_ROOT_USER/
+    # PASSWORD so local dev works with zero .env setup.
+    minio_endpoint_url: str = Field(default="http://localhost:9000", alias="MINIO_ENDPOINT_URL")
+    minio_access_key: str = Field(default="vyaparaflow", alias="MINIO_ACCESS_KEY")
+    minio_secret_key: str = Field(default="vyaparaflow-dev", alias="MINIO_SECRET_KEY")
+    minio_bucket: str = Field(default="vyaparaflow-documents", alias="MINIO_BUCKET")
+
 
 @lru_cache
 def get_settings() -> Settings:

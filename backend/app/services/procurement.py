@@ -50,6 +50,7 @@ sales.py convention).
 
 import math
 import uuid
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
@@ -73,7 +74,14 @@ from app.db.models.purchase import (
     PurchaseRequisitionItem,
 )
 from app.db.models.sales import SalesOrder, SalesOrderItem
+from app.db.models.workflow import AuditLog, Document
+from app.integrations.storage.minio_client import upload_bytes
 from app.services import inventory
+from app.services.documents import (
+    PurchaseOrderPdfInput,
+    PurchaseOrderPdfLine,
+    render_purchase_order_pdf,
+)
 from app.services.numbering import next_document_number
 from app.services.outbox import write_event
 from app.services.pricing import PricingLineInput, price_order
@@ -630,3 +638,240 @@ async def create_purchase_orders_from_requisition(
     await session.flush()
 
     return results
+
+
+class PurchaseOrderStatusResult(BaseModel):
+    purchase_order_id: uuid.UUID
+    po_number: str
+    status: str
+
+
+_APPROVABLE_STATUSES = (PurchaseOrderStatus.DRAFT, PurchaseOrderStatus.PENDING_APPROVAL)
+
+
+async def _load_purchase_order(
+    session: AsyncSession, *, org_id: uuid.UUID, purchase_order_id: uuid.UUID
+) -> PurchaseOrder:
+    po = await session.get(PurchaseOrder, purchase_order_id)
+    if po is None or po.org_id != org_id:
+        raise NotFoundError(f"purchase order {purchase_order_id} not found")
+    return po
+
+
+async def mark_purchase_order_approved(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    purchase_order_id: uuid.UUID,
+    actor_id: uuid.UUID | None = None,
+) -> PurchaseOrderStatusResult:
+    """WF-03 (roadmap.txt 3.6) calls this once its approval chain clears
+    (auto-approved, or every level decided APPROVE) — approvals.py never
+    touches the entity it's approving (polymorphic, by design), so the
+    caller is responsible for reflecting the outcome onto the real
+    business object. Fires purchase_order.approved so WF-04 (3.7) has a
+    real event to trigger on, same outbox pattern as shortage.detected/
+    purchase_requisition.created.
+    """
+    po = await _load_purchase_order(session, org_id=org_id, purchase_order_id=purchase_order_id)
+    if po.status not in _APPROVABLE_STATUSES:
+        raise ConflictError(
+            f"purchase order {purchase_order_id} is not awaiting approval (status={po.status})"
+        )
+    before_status = po.status
+    po.status = PurchaseOrderStatus.APPROVED
+    session.add(
+        AuditLog(
+            org_id=org_id,
+            actor_id=actor_id,
+            action="purchase_order.approved",
+            entity_type="purchase_order",
+            entity_id=po.id,
+            before_json={"status": before_status},
+            after_json={"status": po.status},
+        )
+    )
+    await write_event(
+        session,
+        aggregate_type="purchase_order",
+        aggregate_id=po.id,
+        event_type="purchase_order.approved",
+        payload={"org_id": str(org_id), "purchase_order_id": str(po.id), "po_number": po.po_number},
+    )
+    await session.flush()
+    return PurchaseOrderStatusResult(
+        purchase_order_id=po.id, po_number=po.po_number, status=po.status
+    )
+
+
+async def mark_purchase_order_rejected(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    purchase_order_id: uuid.UUID,
+    reason: str | None = None,
+    actor_id: uuid.UUID | None = None,
+) -> PurchaseOrderStatusResult:
+    """The reject counterpart to mark_purchase_order_approved(). No
+    dedicated REJECTED status exists in PurchaseOrderStatus (Phase 1
+    schema) - CANCELLED is the closest fit (a rejected PO never proceeds,
+    same terminal shape) and the reason is preserved in the audit log
+    rather than needing a migration for one new enum value.
+    """
+    po = await _load_purchase_order(session, org_id=org_id, purchase_order_id=purchase_order_id)
+    if po.status not in _APPROVABLE_STATUSES:
+        raise ConflictError(
+            f"purchase order {purchase_order_id} is not awaiting approval (status={po.status})"
+        )
+    before_status = po.status
+    po.status = PurchaseOrderStatus.CANCELLED
+    session.add(
+        AuditLog(
+            org_id=org_id,
+            actor_id=actor_id,
+            action="purchase_order.rejected",
+            entity_type="purchase_order",
+            entity_id=po.id,
+            before_json={"status": before_status},
+            after_json={"status": po.status, "reason": reason},
+        )
+    )
+    await session.flush()
+    return PurchaseOrderStatusResult(
+        purchase_order_id=po.id, po_number=po.po_number, status=po.status
+    )
+
+
+async def mark_purchase_order_sent(
+    session: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    purchase_order_id: uuid.UUID,
+    actor_id: uuid.UUID | None = None,
+) -> PurchaseOrderStatusResult:
+    """WF-04's last step, once the supplier email has actually sent."""
+    po = await _load_purchase_order(session, org_id=org_id, purchase_order_id=purchase_order_id)
+    if po.status != PurchaseOrderStatus.APPROVED:
+        raise ConflictError(
+            f"purchase order {purchase_order_id} is not approved (status={po.status})"
+        )
+    before_status = po.status
+    po.status = PurchaseOrderStatus.SENT
+    session.add(
+        AuditLog(
+            org_id=org_id,
+            actor_id=actor_id,
+            action="purchase_order.sent",
+            entity_type="purchase_order",
+            entity_id=po.id,
+            before_json={"status": before_status},
+            after_json={"status": po.status},
+        )
+    )
+    await session.flush()
+    return PurchaseOrderStatusResult(
+        purchase_order_id=po.id, po_number=po.po_number, status=po.status
+    )
+
+
+@dataclass
+class PurchaseOrderPdfResult:
+    document_id: uuid.UUID
+    po_number: str
+    storage_uri: str
+    pdf_bytes: bytes
+
+
+async def generate_purchase_order_pdf(
+    session: AsyncSession, *, org_id: uuid.UUID, purchase_order_id: uuid.UUID
+) -> PurchaseOrderPdfResult:
+    """Renders the PO (services/documents.py, pure), uploads it to object
+    storage, and persists a `documents` row - the same document is
+    returned to the caller as raw bytes so n8n (WF-04) can attach it to
+    the supplier email in one HTTP round-trip, without ever needing its
+    own MinIO credentials (storage stays a backend-only concern).
+    """
+    po = await _load_purchase_order(session, org_id=org_id, purchase_order_id=purchase_order_id)
+    supplier = await session.get(Supplier, po.supplier_id)
+    if supplier is None:
+        raise NotFoundError(f"supplier {po.supplier_id} not found")
+    organization = await session.get(Organization, org_id)
+    if organization is None:
+        raise NotFoundError(f"organization {org_id} not found")
+
+    items = (
+        (
+            await session.execute(
+                select(PurchaseOrderItem).where(PurchaseOrderItem.purchase_order_id == po.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    products = (
+        (
+            await session.execute(
+                select(Product).where(Product.id.in_({item.product_id for item in items}))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    products_by_id = {product.id: product for product in products}
+
+    pdf_input = PurchaseOrderPdfInput(
+        po_number=po.po_number,
+        order_date=po.order_date,
+        org_name=organization.name,
+        org_gstin=organization.gstin,
+        org_address=organization.address,
+        supplier_name=supplier.name,
+        supplier_gstin=supplier.gstin,
+        supplier_address=supplier.address,
+        lines=[
+            PurchaseOrderPdfLine(
+                sku=products_by_id[item.product_id].sku,
+                product_name=products_by_id[item.product_id].name,
+                quantity=Decimal(item.quantity),
+                unit_price=Decimal(item.unit_price),
+                gst_rate=Decimal(item.gst_rate),
+                line_total=Decimal(item.line_total),
+            )
+            for item in items
+        ],
+        subtotal=Decimal(po.subtotal),
+        tax_total=Decimal(po.tax_total),
+        total=Decimal(po.total),
+    )
+    pdf_bytes = render_purchase_order_pdf(pdf_input)
+
+    storage_uri, checksum = upload_bytes(
+        key=f"purchase-orders/{org_id}/{po.po_number}.pdf",
+        data=pdf_bytes,
+        content_type="application/pdf",
+    )
+
+    document = (
+        await session.execute(select(Document).where(Document.checksum == checksum))
+    ).scalar_one_or_none()
+    if document is None:
+        document = Document(
+            org_id=org_id,
+            doc_type="purchase_order_pdf",
+            storage_uri=storage_uri,
+            checksum=checksum,
+            content_type="application/pdf",
+            size_bytes=len(pdf_bytes),
+        )
+        session.add(document)
+        await session.flush()
+
+    po.pdf_storage_uri = storage_uri
+    await session.flush()
+
+    return PurchaseOrderPdfResult(
+        document_id=document.id,
+        po_number=po.po_number,
+        storage_uri=storage_uri,
+        pdf_bytes=pdf_bytes,
+    )

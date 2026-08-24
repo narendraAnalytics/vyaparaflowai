@@ -7,7 +7,8 @@ gated by po.create (Manager).
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, require_perm
@@ -19,12 +20,17 @@ from app.services.procurement import (
     CreatePurchaseOrderResult,
     CreateRequisitionRequest,
     CreateRequisitionResult,
+    PurchaseOrderStatusResult,
     ShortageLine,
     SupplierScore,
     create_purchase_orders_from_requisition,
     create_requisition,
     detect_shortage_from_sales_order,
     detect_shortages,
+    generate_purchase_order_pdf,
+    mark_purchase_order_approved,
+    mark_purchase_order_rejected,
+    mark_purchase_order_sent,
     score_suppliers,
 )
 
@@ -144,6 +150,102 @@ async def convert_purchase_requisition_endpoint(
         org_id=user.org_id,
         purchase_requisition_id=purchase_requisition_id,
         order_date=order_date,
+    )
+    await db.commit()
+    return result
+
+
+class RejectPurchaseOrderRequest(BaseModel):
+    reason: str | None = None
+
+
+@router.post(
+    "/purchase-orders/{purchase_order_id}/approve",
+    response_model=PurchaseOrderStatusResult,
+    operation_id="approvePurchaseOrder",
+    summary="Sync a PO's status once its approval chain clears",
+    description=(
+        "Called by WF-03 once the approval chain auto-approves or every level decides "
+        "APPROVE - approvals.py never touches the entity it approves, so this is the "
+        "explicit sync step. Fires purchase_order.approved so WF-04 can send it."
+    ),
+)
+async def approve_purchase_order_endpoint(
+    purchase_order_id: uuid.UUID,
+    user: User = Depends(require_perm("approval.manage")),  # noqa: B008
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> PurchaseOrderStatusResult:
+    result = await mark_purchase_order_approved(
+        db, org_id=user.org_id, purchase_order_id=purchase_order_id, actor_id=user.id
+    )
+    await db.commit()
+    return result
+
+
+@router.post(
+    "/purchase-orders/{purchase_order_id}/reject",
+    response_model=PurchaseOrderStatusResult,
+    operation_id="rejectPurchaseOrder",
+    summary="Sync a PO's status once its approval chain is rejected",
+    description="The reject counterpart to /approve - status becomes CANCELLED.",
+)
+async def reject_purchase_order_endpoint(
+    purchase_order_id: uuid.UUID,
+    payload: RejectPurchaseOrderRequest,
+    user: User = Depends(require_perm("approval.manage")),  # noqa: B008
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> PurchaseOrderStatusResult:
+    result = await mark_purchase_order_rejected(
+        db,
+        org_id=user.org_id,
+        purchase_order_id=purchase_order_id,
+        reason=payload.reason,
+        actor_id=user.id,
+    )
+    await db.commit()
+    return result
+
+
+@router.post(
+    "/purchase-orders/{purchase_order_id}/pdf",
+    operation_id="generatePurchaseOrderPdf",
+    summary="Render a PO to PDF, store it, and return the bytes",
+    description=(
+        "Renders the PO, uploads it to object storage, persists a documents row, and "
+        "returns the raw PDF bytes in the response body so a caller (WF-04) can attach "
+        "it directly to a supplier email without needing its own storage credentials."
+    ),
+)
+async def generate_purchase_order_pdf_endpoint(
+    purchase_order_id: uuid.UUID,
+    user: User = Depends(require_perm("po.create")),  # noqa: B008
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> Response:
+    result = await generate_purchase_order_pdf(
+        db, org_id=user.org_id, purchase_order_id=purchase_order_id
+    )
+    await db.commit()
+    return Response(
+        content=result.pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{result.po_number}.pdf"'},
+    )
+
+
+@router.post(
+    "/purchase-orders/{purchase_order_id}/mark-sent",
+    response_model=PurchaseOrderStatusResult,
+    operation_id="markPurchaseOrderSent",
+    summary="Mark an approved PO as sent to the supplier",
+    description="WF-04's last step, once the supplier email has actually sent.",
+)
+async def mark_purchase_order_sent_endpoint(
+    purchase_order_id: uuid.UUID,
+    user: User = Depends(require_perm("po.create")),  # noqa: B008
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> PurchaseOrderStatusResult:
+    result = await mark_purchase_order_sent(
+        db, org_id=user.org_id, purchase_order_id=purchase_order_id, actor_id=user.id
     )
     await db.commit()
     return result

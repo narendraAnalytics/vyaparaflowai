@@ -33,8 +33,13 @@ services) owns the state; n8n reacts to it.
   Sales Order Intake, WF-02 Inventory Shortage Router, WF-03 Purchase
   Order Approval — all built AND verified against real infra, including a
   real human Telegram-approval click resuming a paused workflow via
-  ngrok). **Next session starts at roadmap.txt 3.7** (WF-04 Send PO to
-  Supplier). Phase 3 was enhanced 2026-08-24
+  ngrok). 3.7 (WF-04 Send PO to Supplier) is PARTIAL: all backend work
+  is done and verified for real (PO approve/reject endpoints — closing a
+  real gap where PurchaseOrder.status never updated after approval — PDF
+  generation via reportlab, MinIO upload), but the n8n side (wiring WF-03
+  to call the new endpoints, the actual WF-04 workflow) isn't built yet.
+  **Next session resumes exactly there** — see roadmap.txt's NEXT ACTION.
+  Phase 3 was enhanced 2026-08-24
   against current n8n production guidance and a review of `backend/.env`;
   locked-in decisions worth knowing before touching it: Telegram (not
   WhatsApp/Slack) is the channel for internal approvals/alerts (WF-03,
