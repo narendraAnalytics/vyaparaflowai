@@ -62,7 +62,15 @@ async def _issue_tokens(db: AsyncSession, user: User) -> TokenPair:
     "/login",
     response_model=TokenPair,
     operation_id="login",
-    dependencies=[Depends(RateLimiter(key_prefix="login", limit=10, window_seconds=60))],
+    dependencies=[
+        Depends(
+            RateLimiter(
+                key_prefix="login",
+                limit=get_settings().rate_limit_login_per_minute,
+                window_seconds=60,
+            )
+        )
+    ],
 )
 async def login(
     payload: LoginRequest,

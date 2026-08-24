@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy app
+
+      # Phase 2.14: spins up ephemeral Postgres + Redis via testcontainers
+      # (Docker is preinstalled on ubuntu-latest runners), migrates and
+      # seeds the fresh database, then runs the full suite against it —
+      # isolated per run, no shared Neon state, no live-service credentials
+      # needed in CI. See backend/scripts/ci_test_runner.py for why this
+      # runs pytest as a subprocess rather than an in-process fixture.
+      - name: Run tests (ephemeral Postgres + Redis via testcontainers)
+        env:
+          JWT_SECRET: ci-test-secret-not-for-production-use
+        run: uv run python scripts/ci_test_runner.py --cov-report=xml
+
+      # Phase 2.14's coverage target is specifically "services/", not the
+      # whole app (app/dev.py, app/integrations/ stubs, etc. aren't
+      # meaningfully unit-testable yet and would drag an app-wide
+      # threshold down for the wrong reason). pytest's own --cov=app
+      # (see pyproject.toml addopts) already wrote the .coverage data
+      # file above; this reads it back scoped to just app/services/*.
+      - name: Enforce >=80% coverage on services/
+        run: uv run coverage report --include="app/services/*" --fail-under=80
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: backend/coverage.xml
+          if-no-files-found: ignore

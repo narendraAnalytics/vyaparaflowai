@@ -374,10 +374,22 @@ tools (`mcp__neon__run_sql`), not just Alembic's own exit code.
 `pytest.ini_options` in `pyproject.toml` sets `asyncio_mode = "auto"`
 (no `@pytest.mark.asyncio` boilerplate needed beyond what's already there)
 and `--cov=app --cov-report=term-missing` runs on every `pytest` invocation.
-Tests hit real Neon + Upstash (no mocking) — this is intentional for now
-(Phase 0/1 has limited domain logic to unit-test in isolation yet); once
-more of `services/` exists, prefer unit tests with a Neon branch or
-testcontainers for isolation rather than hitting the shared dev database.
+Tests hit real Neon + Upstash (no mocking) for local dev — unchanged as
+of Phase 2.14. CI (`.github/workflows/ci.yml`) instead runs the same
+suite against ephemeral Postgres + Redis via `testcontainers`
+(`backend/scripts/ci_test_runner.py`), migrated and seeded fresh per
+run — isolated, ~10x faster (no Neon network latency), and it's how two
+real bugs got caught: a dead `RATE_LIMIT_LOGIN_PER_MINUTE` setting
+(`/auth/login` hardcoded `limit=10` instead of reading it — fixed) and
+Postgres's default `max_connections=100` being exactly exhausted by
+`test_inventory.py`'s 100-connection concurrency proof (raised to 300 via
+the container's startup command). `ci_test_runner.py` runs pytest as a
+**subprocess**, not an in-process fixture — see its docstring for why
+(`app/db/session.py` binds its engine to `get_settings().database_url`
+at import time, before any fixture could intervene). A separate CI step
+enforces `>=80%` coverage on `app/services/*` specifically (currently
+95-100% per module) rather than the whole app, since `app/dev.py` and
+the `app/integrations/` stubs aren't meaningfully testable yet.
 
 Because tests hit real, persistent Neon data (not a fresh DB per run), any
 test that creates a row under a unique constraint (product SKU, warehouse
