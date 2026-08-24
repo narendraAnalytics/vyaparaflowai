@@ -186,6 +186,37 @@ app/
                  suppliers.bank_account_number/bank_ifsc, the same kind
                  of Phase-1-schema gap procurement.py documented for
                  "last price change".
+                 payments.py (Phase 2.10): payment allocation, aging, and
+                 outstanding-balance reporting — symmetric across AR
+                 (customer payments) and AP (supplier payments) via a
+                 party_type ("customer"|"supplier") param, the same
+                 shared-function pattern pricing.py uses for O2C/P2P GST.
+                 allocate_payment() is a pure function: explicit
+                 allocations (caller picks which invoice(s)) or auto-
+                 allocate oldest-due-first; returns an AllocationPlan
+                 with unapplied_amount for whatever's left of the payment
+                 (over-payment handling — the Payment row always records
+                 the full amount actually received/sent, never capped;
+                 only per-invoice allocation is capped, by the existing
+                 amount_paid<=total CHECK; the excess is NOT persisted as
+                 a "credit balance" — no such table in the Phase 1
+                 schema, documented in the module docstring the same way
+                 as procurement.py's missing price-history table).
+                 aging_bucket_for() is a pure function computing the
+                 roadmap's exact four buckets (0-30/31-60/61-90/90+),
+                 not-yet-due clamping into 0-30. "Open" invoice statuses
+                 are chosen deliberately per side: customer ISSUED/
+                 PARTIALLY_PAID/OVERDUE; supplier RECEIVED/MATCHED/
+                 APPROVED but NOT BLOCKED (paying a three-way-match-
+                 blocked invoice would be exactly the "automation moves
+                 money without a human gate" mistake the guardrails
+                 forbid). record_payment() (async, persists Payment +
+                 PaymentAllocation, updates amount_paid/status — supplier
+                 invoices have no PARTIALLY_PAID value in
+                 SupplierInvoiceStatus, so status is left alone until
+                 fully paid, documented rather than silently
+                 inconsistent with the customer side), outstanding_
+                 balance() and aging_report() are read-only.
   workers/       background jobs (arq/celery — not yet built)
   ai/            document extraction, prompts, eval harness (Phase 4)
   integrations/  gst/, razorpay/, whatsapp/, storage/ (Phase 4-5)
