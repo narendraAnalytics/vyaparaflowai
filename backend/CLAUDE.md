@@ -81,12 +81,17 @@ app/
                  master-data CRUD's app/schemas/master_data.py, just
                  colocated in services/ instead since that's where those
                  models already lived. Every endpoint across the whole
-                 API (43 total) has a unique operation_id, verified via
-                 app.openapi() at commit time. Known gap: no service/
-                 route exists yet for creating goods receipts or supplier
-                 invoices (never a roadmap 2.x line item) — the matching
-                 router assumes those rows already exist, same as
-                 tests/test_matching.py's own DB rig.
+                 API (45 total) has a unique operation_id, verified via
+                 app.openapi() at commit time. receiving.py (added as a
+                 follow-up once 2.13 surfaced that no service/route
+                 existed to create goods receipts or supplier invoices —
+                 the matching router assumed those rows already existed,
+                 same as tests/test_matching.py's own DB rig) adds POST
+                 /goods-receipts (goods_receipt.create, Warehouse role)
+                 and POST /supplier-invoices (supplier_invoice.create,
+                 new permission added to the Accounts role alongside the
+                 pre-existing supplier_invoice.match) — this closed the
+                 last gap in Phase 2's curl-drivable P2P cycle.
   services/      business logic — the real value of the project, called by
                  n8n over HTTP, never duplicated into n8n Code nodes.
                  numbering.py (Phase 1) is built. pricing.py (Phase 2.5):
@@ -274,6 +279,32 @@ app/
                  Phase 3's job (n8n). get_approval_chain_status() is a
                  read-only rollup (no_chain/pending/approved/rejected) a
                  future caller can gate on.
+                 receiving.py (added as a Phase 2 DoD follow-up, never
+                 its own roadmap 2.x line item): goods-receipt and
+                 supplier-invoice intake - the two capture steps
+                 matching.py's three-way match assumed already existed.
+                 Both are intake of an EXTERNAL document rather than
+                 something this system prices/generates, so neither calls
+                 services/pricing.py - a goods receipt has no money at
+                 all, and a supplier invoice's line_total is taken as
+                 billed (header subtotal/tax_total derived by summing
+                 lines), not recomputed by our own GST engine.
+                 create_goods_receipt() is the one place besides
+                 sales.py/procurement.py that calls services/inventory.py
+                 - inventory.receive() for every line with
+                 accepted_quantity > 0 (rejected/damaged units never
+                 entered stock), in the same transaction as the
+                 GoodsReceipt/GoodsReceiptItem rows. Over-receipt is
+                 guarded against each PO line's own OUTSTANDING quantity
+                 (ordered minus already-accepted across every prior GRN
+                 for that line, not just this GRN's own numbers), and the
+                 PO is advanced to partially_received/received once every
+                 line's cumulative accepted quantity is checked.
+                 create_supplier_invoice() validates the supplier (and,
+                 if given, that the referenced PO belongs to the same
+                 supplier) and persists the invoice at status=received -
+                 run POST /matching/three-way next to move it to
+                 matched/blocked.
                  outbox.py (Phase 2.12): write_event() - the write side of
                  the transactional outbox, one-line helper, never commits.
                  Not wired into any existing service yet - each Phase 3

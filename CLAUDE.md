@@ -26,7 +26,9 @@ services) owns the state; n8n reacts to it.
 - `roadmap.txt` (gitignored, local-only) is the authoritative phase-by-phase
   build plan — work through it phase by phase, don't jump ahead. Phases 0
   (foundation) and 1 (domain model + seed data) are done; Phase 2 (FastAPI
-  business logic) is next.
+  business logic) is done, including the goods-receipt/supplier-invoice
+  intake endpoints that closed its last Definition-of-Done gap; Phase 3
+  (n8n workflows) is next.
 - `docs/adr/` holds architecture decision records — read ADR 0001 before
   changing any part of the core stack.
 - `docs/er-diagram.md` has the full schema as Mermaid ERDs, grouped the
@@ -72,10 +74,15 @@ quantity) lives in `backend/app/services/` and n8n calls it over HTTP.
 GST/pricing (`services/pricing.py`, 2.5), inventory movements
 (`services/inventory.py`, 2.6), sales (`services/sales.py`, 2.7 — binding
 orders, non-binding quotations confirmed later, and direct walk-in counter
-sales), and procurement (`services/procurement.py`, 2.8 — shortage
-detection, an explainable reorder-quantity calculator, a scored supplier
-selection, and requisition -> PO creation) are built; the three-way match
-(matching.py) is next.
+sales), procurement (`services/procurement.py`, 2.8 — shortage detection,
+an explainable reorder-quantity calculator, a scored supplier selection,
+and requisition -> PO creation), the three-way match
+(`services/matching.py`, 2.9 — PO vs goods receipt vs supplier invoice),
+payments/aging (`services/payments.py`, 2.10), the approval chain
+(`services/approvals.py`, 2.11), and goods-receipt/supplier-invoice intake
+(`services/receiving.py` — never its own 2.x line item; added as a
+follow-up once Phase 2's Definition of Done flagged that without it the
+P2P curl cycle couldn't reach matching.py on its own) are all built.
 
 **Inventory and money only change through an append-only ledger row inside
 a database transaction** (`stock_ledger`, `ledger_entries`). No direct

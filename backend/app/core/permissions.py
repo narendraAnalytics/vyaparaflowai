@@ -22,7 +22,9 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     ),
     "Sales": frozenset({"sales_order.create", "customer.view"}),
     "Warehouse": frozenset({"goods_receipt.create", "delivery.create", "inventory.adjust"}),
-    "Accounts": frozenset({"payment.record", "invoice.create", "supplier_invoice.match"}),
+    "Accounts": frozenset(
+        {"payment.record", "invoice.create", "supplier_invoice.create", "supplier_invoice.match"}
+    ),
 }
 
 
