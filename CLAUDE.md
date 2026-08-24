@@ -89,8 +89,11 @@ backend/           FastAPI service — see backend/CLAUDE.md
 frontend/          Next.js 16 dashboard (not yet built)
 n8n/workflows/      exported workflow JSON, version-controlled
 docs/adr/           architecture decision records
-infra/terraform/    GCP infrastructure as code (not yet built)
-docker-compose.yml   local dev: minio + n8n (NOT postgres/redis — see below)
+infra/               deploy config for Render (LOCKED 2026-08-24, was GCP/
+                     Terraform) — render.yaml Blueprint, not yet built
+docker-compose.yml   local dev: minio + n8n queue-mode stack (main/worker/
+                     webhook + its own Postgres) — NOT the app's own
+                     postgres/redis (Neon/Upstash) — see below
 ```
 
 ## Architecture (non-obvious, spans multiple files/services)
