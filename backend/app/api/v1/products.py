@@ -22,7 +22,7 @@ async def _get_org_product(db: AsyncSession, org_id: uuid.UUID, product_id: uuid
     return product
 
 
-@router.get("", response_model=Page[ProductOut])
+@router.get("", response_model=Page[ProductOut], operation_id="listProducts")
 async def list_products(
     user: User = Depends(get_current_user),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
@@ -54,7 +54,7 @@ async def list_products(
     return Page(items=list(rows), total=total, limit=limit, offset=offset)
 
 
-@router.get("/{product_id}", response_model=ProductOut)
+@router.get("/{product_id}", response_model=ProductOut, operation_id="getProduct")
 async def get_product(
     product_id: uuid.UUID,
     user: User = Depends(get_current_user),  # noqa: B008
@@ -63,7 +63,7 @@ async def get_product(
     return await _get_org_product(db, user.org_id, product_id)
 
 
-@router.post("", response_model=ProductOut, status_code=201)
+@router.post("", response_model=ProductOut, status_code=201, operation_id="createProduct")
 async def create_product(
     payload: ProductCreate,
     user: User = Depends(require_perm("product.manage")),  # noqa: B008
@@ -82,7 +82,7 @@ async def create_product(
     return product
 
 
-@router.patch("/{product_id}", response_model=ProductOut)
+@router.patch("/{product_id}", response_model=ProductOut, operation_id="updateProduct")
 async def update_product(
     product_id: uuid.UUID,
     payload: ProductUpdate,
@@ -101,7 +101,7 @@ async def update_product(
     return product
 
 
-@router.delete("/{product_id}", status_code=204)
+@router.delete("/{product_id}", status_code=204, operation_id="deactivateProduct")
 async def deactivate_product(
     product_id: uuid.UUID,
     user: User = Depends(require_perm("product.manage")),  # noqa: B008

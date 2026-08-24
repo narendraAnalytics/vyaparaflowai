@@ -17,6 +17,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "supplier.manage",
             "product.manage",
             "warehouse.manage",
+            "approval.manage",
         }
     ),
     "Sales": frozenset({"sales_order.create", "customer.view"}),

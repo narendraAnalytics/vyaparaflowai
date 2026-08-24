@@ -24,7 +24,7 @@ async def _get_org_customer(
     return customer
 
 
-@router.get("", response_model=Page[CustomerOut])
+@router.get("", response_model=Page[CustomerOut], operation_id="listCustomers")
 async def list_customers(
     user: User = Depends(get_current_user),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
@@ -49,7 +49,7 @@ async def list_customers(
     return Page(items=list(rows), total=total, limit=limit, offset=offset)
 
 
-@router.get("/{customer_id}", response_model=CustomerOut)
+@router.get("/{customer_id}", response_model=CustomerOut, operation_id="getCustomer")
 async def get_customer(
     customer_id: uuid.UUID,
     user: User = Depends(get_current_user),  # noqa: B008
@@ -58,7 +58,7 @@ async def get_customer(
     return await _get_org_customer(db, user.org_id, customer_id)
 
 
-@router.post("", response_model=CustomerOut, status_code=201)
+@router.post("", response_model=CustomerOut, status_code=201, operation_id="createCustomer")
 async def create_customer(
     payload: CustomerCreate,
     user: User = Depends(require_perm("customer.manage")),  # noqa: B008
@@ -75,7 +75,7 @@ async def create_customer(
     return customer
 
 
-@router.patch("/{customer_id}", response_model=CustomerOut)
+@router.patch("/{customer_id}", response_model=CustomerOut, operation_id="updateCustomer")
 async def update_customer(
     customer_id: uuid.UUID,
     payload: CustomerUpdate,
@@ -94,7 +94,7 @@ async def update_customer(
     return customer
 
 
-@router.delete("/{customer_id}", status_code=204)
+@router.delete("/{customer_id}", status_code=204, operation_id="deactivateCustomer")
 async def deactivate_customer(
     customer_id: uuid.UUID,
     user: User = Depends(require_perm("customer.manage")),  # noqa: B008

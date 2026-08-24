@@ -53,7 +53,7 @@ async def add_request_id(request: Request, call_next):
     return response
 
 
-@app.get("/health")
+@app.get("/health", tags=["health"], operation_id="healthCheck")
 async def health(request: Request) -> dict:
     status: dict[str, str] = {"status": "ok"}
 

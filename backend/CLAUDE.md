@@ -66,7 +66,27 @@ app/
                  paginated list with q search + is_active filter, get,
                  create, patch, soft-delete/deactivate; org-scoped off the
                  JWT user, reads open to any authenticated org member,
-                 writes gated by require_perm(<entity>.manage))
+                 writes gated by require_perm(<entity>.manage)). Phase
+                 2.13 added the business-logic routers — sales_orders.py,
+                 procurement.py, matching.py, payments.py, approvals.py —
+                 discovered mid-phase to be entirely missing until then
+                 (services 2.5-2.12 had zero HTTP routes), which blocked
+                 Phase 2's own "curl-drivable P2P+O2C cycle" Definition
+                 of Done; built with the user's sign-off before the
+                 OpenAPI-polish pass 2.13 originally asked for. These
+                 reuse each service module's own Request/Result Pydantic
+                 models directly as the wire contract (CreateSalesOrder
+                 Request, RunThreeWayMatchResult, etc.) rather than
+                 duplicating them into app/schemas/ — same convention as
+                 master-data CRUD's app/schemas/master_data.py, just
+                 colocated in services/ instead since that's where those
+                 models already lived. Every endpoint across the whole
+                 API (43 total) has a unique operation_id, verified via
+                 app.openapi() at commit time. Known gap: no service/
+                 route exists yet for creating goods receipts or supplier
+                 invoices (never a roadmap 2.x line item) — the matching
+                 router assumes those rows already exist, same as
+                 tests/test_matching.py's own DB rig.
   services/      business logic — the real value of the project, called by
                  n8n over HTTP, never duplicated into n8n Code nodes.
                  numbering.py (Phase 1) is built. pricing.py (Phase 2.5):

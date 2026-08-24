@@ -61,6 +61,7 @@ async def _issue_tokens(db: AsyncSession, user: User) -> TokenPair:
 @router.post(
     "/login",
     response_model=TokenPair,
+    operation_id="login",
     dependencies=[Depends(RateLimiter(key_prefix="login", limit=10, window_seconds=60))],
 )
 async def login(
@@ -76,7 +77,7 @@ async def login(
     return await _issue_tokens(db, user)
 
 
-@router.post("/refresh", response_model=TokenPair)
+@router.post("/refresh", response_model=TokenPair, operation_id="refreshToken")
 async def refresh(
     payload: RefreshRequest,
     db: AsyncSession = Depends(get_db),  # noqa: B008
@@ -100,7 +101,7 @@ async def refresh(
     return await _issue_tokens(db, user)
 
 
-@router.post("/logout", status_code=204)
+@router.post("/logout", status_code=204, operation_id="logout")
 async def logout(
     payload: RefreshRequest,
     db: AsyncSession = Depends(get_db),  # noqa: B008
@@ -116,7 +117,7 @@ async def logout(
     return None
 
 
-@router.get("/me", response_model=UserOut)
+@router.get("/me", response_model=UserOut, operation_id="getCurrentUser")
 async def me(
     user: User = Depends(get_current_user),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
@@ -127,7 +128,7 @@ async def me(
     )
 
 
-@router.get("/admin-ping")
+@router.get("/admin-ping", operation_id="adminPing")
 async def admin_ping(
     user: User = Depends(require_role("Owner", "Manager")),  # noqa: B008
 ) -> dict[str, bool]:

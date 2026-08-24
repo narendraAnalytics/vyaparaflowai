@@ -24,7 +24,7 @@ async def _get_org_warehouse(
     return warehouse
 
 
-@router.get("", response_model=Page[WarehouseOut])
+@router.get("", response_model=Page[WarehouseOut], operation_id="listWarehouses")
 async def list_warehouses(
     user: User = Depends(get_current_user),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
@@ -56,7 +56,7 @@ async def list_warehouses(
     return Page(items=list(rows), total=total, limit=limit, offset=offset)
 
 
-@router.get("/{warehouse_id}", response_model=WarehouseOut)
+@router.get("/{warehouse_id}", response_model=WarehouseOut, operation_id="getWarehouse")
 async def get_warehouse(
     warehouse_id: uuid.UUID,
     user: User = Depends(get_current_user),  # noqa: B008
@@ -65,7 +65,7 @@ async def get_warehouse(
     return await _get_org_warehouse(db, user.org_id, warehouse_id)
 
 
-@router.post("", response_model=WarehouseOut, status_code=201)
+@router.post("", response_model=WarehouseOut, status_code=201, operation_id="createWarehouse")
 async def create_warehouse(
     payload: WarehouseCreate,
     user: User = Depends(require_perm("warehouse.manage")),  # noqa: B008
@@ -82,7 +82,7 @@ async def create_warehouse(
     return warehouse
 
 
-@router.patch("/{warehouse_id}", response_model=WarehouseOut)
+@router.patch("/{warehouse_id}", response_model=WarehouseOut, operation_id="updateWarehouse")
 async def update_warehouse(
     warehouse_id: uuid.UUID,
     payload: WarehouseUpdate,
@@ -101,7 +101,7 @@ async def update_warehouse(
     return warehouse
 
 
-@router.delete("/{warehouse_id}", status_code=204)
+@router.delete("/{warehouse_id}", status_code=204, operation_id="deactivateWarehouse")
 async def deactivate_warehouse(
     warehouse_id: uuid.UUID,
     user: User = Depends(require_perm("warehouse.manage")),  # noqa: B008

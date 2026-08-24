@@ -24,7 +24,7 @@ async def _get_org_supplier(
     return supplier
 
 
-@router.get("", response_model=Page[SupplierOut])
+@router.get("", response_model=Page[SupplierOut], operation_id="listSuppliers")
 async def list_suppliers(
     user: User = Depends(get_current_user),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
@@ -49,7 +49,7 @@ async def list_suppliers(
     return Page(items=list(rows), total=total, limit=limit, offset=offset)
 
 
-@router.get("/{supplier_id}", response_model=SupplierOut)
+@router.get("/{supplier_id}", response_model=SupplierOut, operation_id="getSupplier")
 async def get_supplier(
     supplier_id: uuid.UUID,
     user: User = Depends(get_current_user),  # noqa: B008
@@ -58,7 +58,7 @@ async def get_supplier(
     return await _get_org_supplier(db, user.org_id, supplier_id)
 
 
-@router.post("", response_model=SupplierOut, status_code=201)
+@router.post("", response_model=SupplierOut, status_code=201, operation_id="createSupplier")
 async def create_supplier(
     payload: SupplierCreate,
     user: User = Depends(require_perm("supplier.manage")),  # noqa: B008
@@ -75,7 +75,7 @@ async def create_supplier(
     return supplier
 
 
-@router.patch("/{supplier_id}", response_model=SupplierOut)
+@router.patch("/{supplier_id}", response_model=SupplierOut, operation_id="updateSupplier")
 async def update_supplier(
     supplier_id: uuid.UUID,
     payload: SupplierUpdate,
@@ -94,7 +94,7 @@ async def update_supplier(
     return supplier
 
 
-@router.delete("/{supplier_id}", status_code=204)
+@router.delete("/{supplier_id}", status_code=204, operation_id="deactivateSupplier")
 async def deactivate_supplier(
     supplier_id: uuid.UUID,
     user: User = Depends(require_perm("supplier.manage")),  # noqa: B008
