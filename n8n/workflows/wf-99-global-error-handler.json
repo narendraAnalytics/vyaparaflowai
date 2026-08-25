@@ -1,0 +1,119 @@
+{
+  "id": "5IMTtBDvmPUTxLti",
+  "name": "WF-99 Global Error Handler",
+  "active": true,
+  "nodes": [
+    {
+      "id": "error_trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "extract_error_info",
+      "name": "Extract Error Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0],
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst workflowName = (data.workflow && data.workflow.name) || 'unknown workflow';\nconst executionId = (data.execution && data.execution.id) || null;\nconst executionUrl = (data.execution && data.execution.url) || '';\nconst failedNode = (data.execution && data.execution.lastNodeExecuted) || 'unknown node';\nconst errorMessage = ((data.execution && data.execution.error && data.execution.error.message) || 'unknown error').toString().slice(0, 500);\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.failureCounts) staticData.failureCounts = {};\nstaticData.failureCounts[workflowName] = (staticData.failureCounts[workflowName] || 0) + 1;\nconst failureCount = staticData.failureCounts[workflowName];\n\nreturn [{\n  json: {\n    workflow_name: workflowName,\n    n8n_execution_id: executionId,\n    execution_url: executionUrl,\n    failed_node: failedNode,\n    error_message: errorMessage,\n    failure_count: failureCount,\n    is_repeated_failure: failureCount >= 3 && failureCount % 3 === 0\n  }\n}];"
+      }
+    },
+    {
+      "id": "http_log_event",
+      "name": "Log Workflow Event",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/v1/workflow-events",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Idempotency-Key", "value": "={{ ($json.n8n_execution_id || $now.toMillis()) + '-wf99' }}" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { workflow_name: $json.workflow_name, n8n_execution_id: $json.n8n_execution_id, status: 'error', payload: { failed_node: $json.failed_node, error_message: $json.error_message, execution_url: $json.execution_url, failure_count: $json.failure_count } } }}",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "id": "qOvICABHKCMOYsZe", "name": "FastAPI Header Auth" } }
+    },
+    {
+      "id": "tg_alert",
+      "name": "Alert Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [660, 0],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "8960247246",
+        "text": "=WF-99: {{ $('Extract Error Info').item.json.workflow_name }} failed (failure #{{ $('Extract Error Info').item.json.failure_count }} for this workflow).\nNode: {{ $('Extract Error Info').item.json.failed_node }}\nError: {{ $('Extract Error Info').item.json.error_message }}\nExecution: {{ $('Extract Error Info').item.json.execution_url }}",
+        "additionalFields": { "parse_mode": "none" }
+      },
+      "credentials": { "telegramApi": { "id": "SQUcKPNAvIu2pp1K", "name": "Telegram Bot" } },
+      "webhookId": "99fec1b5-6400-4ad3-8e8e-192a3f04a9c2",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "if_repeated",
+      "name": "Repeated Failure?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [880, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $('Extract Error Info').item.json.is_repeated_failure }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "http_email_dev",
+      "name": "Email Dev via Resend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { from: \"VyaparaFlow <admin@buildflows.shop>\", to: [\"narendra.adp@gmail.com\"], subject: \"Repeated failures: \" + $('Extract Error Info').item.json.workflow_name, html: \"<p>Workflow <b>\" + $('Extract Error Info').item.json.workflow_name + \"</b> has failed \" + $('Extract Error Info').item.json.failure_count + \" times.</p><p>Latest error (node: \" + $('Extract Error Info').item.json.failed_node + \"): \" + $('Extract Error Info').item.json.error_message + \"</p><p><a href='\" + $('Extract Error Info').item.json.execution_url + \"'>View execution</a></p>\" } }}",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "id": "1AJh9LVRJQ0cBmd5", "name": "Resend" } }
+    }
+  ],
+  "connections": {
+    "Error Trigger": { "main": [[{ "node": "Extract Error Info", "type": "main", "index": 0 }]] },
+    "Extract Error Info": { "main": [[{ "node": "Log Workflow Event", "type": "main", "index": 0 }]] },
+    "Log Workflow Event": {
+      "main": [
+        [{ "node": "Alert Telegram", "type": "main", "index": 0 }],
+        [{ "node": "Alert Telegram", "type": "main", "index": 0 }]
+      ]
+    },
+    "Alert Telegram": { "main": [[{ "node": "Repeated Failure?", "type": "main", "index": 0 }]] },
+    "Repeated Failure?": { "main": [[{ "node": "Email Dev via Resend", "type": "main", "index": 0 }], []] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  }
+}

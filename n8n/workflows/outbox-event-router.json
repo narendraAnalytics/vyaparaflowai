@@ -1,0 +1,104 @@
+{
+  "id": "n2Why25cxX52QZKR",
+  "name": "Outbox Event Router",
+  "active": true,
+  "nodes": [
+    {
+      "id": "webhook1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "parameters": { "httpMethod": "POST", "path": "wf02-shortage-router", "responseMode": "onReceived", "authentication": "headerAuth", "options": {} },
+      "credentials": { "httpHeaderAuth": { "id": "RYfmblqhjgxgpZmi", "name": "Outbox Inbound Auth" } },
+      "webhookId": "c4a605cc-3db9-4334-bb86-f8924a8980df"
+    },
+    {
+      "id": "switch1",
+      "name": "Route By Event Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [220, 0],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [{ "leftValue": "={{ $json.body.event_type }}", "rightValue": "shortage.detected", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputKey": "shortage.detected"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [{ "leftValue": "={{ $json.body.event_type }}", "rightValue": "purchase_requisition.created", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputKey": "purchase_requisition.created"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [{ "leftValue": "={{ $json.body.event_type }}", "rightValue": "purchase_order.approved", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputKey": "purchase_order.approved"
+            }
+          ],
+          "fallbackOutput": "extra"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "exec_wf02",
+      "name": "Run WF-02 Shortage Router",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [440, -40],
+      "parameters": { "source": "database", "workflowId": "dKy2vyhdNmamIiSG", "mode": "once" }
+    },
+    {
+      "id": "noop_unmatched",
+      "name": "Unmatched Event Type",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [440, 120],
+      "parameters": {}
+    },
+    {
+      "id": "exec_wf03",
+      "name": "Run WF-03 PO Approval",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [440, 240],
+      "parameters": { "source": "database", "workflowId": "YWGlCGrhnHySAjkL", "mode": "once" }
+    },
+    {
+      "id": "exec_wf04",
+      "name": "Run WF-04 Send PO to Supplier",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [440, 440],
+      "parameters": { "source": "database", "workflowId": "r1rPbxs8tE9VYIvk", "mode": "once" }
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Route By Event Type", "type": "main", "index": 0 }]] },
+    "Route By Event Type": {
+      "main": [
+        [{ "node": "Run WF-02 Shortage Router", "type": "main", "index": 0 }],
+        [{ "node": "Run WF-03 PO Approval", "type": "main", "index": 0 }],
+        [{ "node": "Run WF-04 Send PO to Supplier", "type": "main", "index": 0 }],
+        [{ "node": "Unmatched Event Type", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1", "errorWorkflow": "5IMTtBDvmPUTxLti" }
+}

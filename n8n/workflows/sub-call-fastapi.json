@@ -1,0 +1,72 @@
+{
+  "id": "lECXPT0fTzeIExZ3",
+  "name": "Sub - Call FastAPI",
+  "active": true,
+  "nodes": [
+    {
+      "id": "trig",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": { "inputSource": "passthrough" }
+    },
+    {
+      "id": "http_call",
+      "name": "Call FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0],
+      "parameters": {
+        "method": "={{ $json.method }}",
+        "url": "=http://host.docker.internal:8000/api/v1{{ $json.path }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Idempotency-Key", "value": "={{ $json.idempotencyKey || '' }}" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body || {} }}",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "id": "qOvICABHKCMOYsZe", "name": "FastAPI Header Auth" } },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "tag_success",
+      "name": "Tag Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, -60],
+      "parameters": { "language": "javaScript", "mode": "runOnceForAllItems", "jsCode": "return [{ json: { ...$input.first().json, success: true } }];" }
+    },
+    {
+      "id": "tag_error",
+      "name": "Tag Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 60],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json;\nconst errObj = item.error || {};\nconst message = (errObj.message || item.message || 'unknown error').toString();\nreturn [{ json: { success: false, error_message: message, error_raw: errObj } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": { "main": [[{ "node": "Call FastAPI", "type": "main", "index": 0 }]] },
+    "Call FastAPI": {
+      "main": [
+        [{ "node": "Tag Success", "type": "main", "index": 0 }],
+        [{ "node": "Tag Error", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  }
+}

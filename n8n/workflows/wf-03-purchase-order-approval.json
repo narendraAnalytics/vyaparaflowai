@@ -1,0 +1,580 @@
+{
+  "id": "YWGlCGrhnHySAjkL",
+  "name": "WF-03 Purchase Order Approval",
+  "active": true,
+  "nodes": [
+    {
+      "id": "ewt1",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": { "inputSource": "passthrough" }
+    },
+    {
+      "id": "if_auto",
+      "name": "Auto Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.auto_approved }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_card1",
+      "name": "Send Level 1 Approval Card",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [880, 40],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendAndWait",
+        "chatId": "8960247246",
+        "message": "=PO Approval Needed - Level 1 ({{ $json.levels[0].role }})\nPO: {{ $('Convert Requisition to POs').item.json.po_number }}\nSupplier: {{ $('Convert Requisition to POs').item.json.supplier_name }}\nAmount: Rs.{{ $('Convert Requisition to POs').item.json.total }}\nWhy: {{ $json.reasoning.join(', ') }}",
+        "responseType": "approval",
+        "approvalOptions": { "values": { "approvalType": "double", "approveButtonLabel": "Approve", "disapproveButtonLabel": "Reject" } },
+        "options": {},
+        "chatApproval": true
+      },
+      "credentials": { "telegramApi": { "id": "SQUcKPNAvIu2pp1K", "name": "Telegram Bot" } },
+      "webhookId": "582baa79-3a63-4e7f-9517-5df12f27630f"
+    },
+    {
+      "id": "if_l1",
+      "name": "Level 1 Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 40],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.data.approved }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "if_l2exists",
+      "name": "Has Level 2?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1540, -60],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $('Create Approval Chain').item.json.levels.length }}", "rightValue": 2, "operator": { "type": "number", "operation": "gte" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_card2",
+      "name": "Send Level 2 Approval Card",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1760, -160],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendAndWait",
+        "chatId": "8960247246",
+        "message": "=PO Approval Needed - Level 2 ({{ $('Create Approval Chain').item.json.levels[1].role }})\nPO: {{ $('Convert Requisition to POs').item.json.po_number }}\nSupplier: {{ $('Convert Requisition to POs').item.json.supplier_name }}\nAmount: Rs.{{ $('Convert Requisition to POs').item.json.total }}\nWhy: {{ $('Create Approval Chain').item.json.reasoning.join(', ') }}",
+        "responseType": "approval",
+        "approvalOptions": { "values": { "approvalType": "double", "approveButtonLabel": "Approve", "disapproveButtonLabel": "Reject" } },
+        "options": {},
+        "chatApproval": true
+      },
+      "credentials": { "telegramApi": { "id": "SQUcKPNAvIu2pp1K", "name": "Telegram Bot" } },
+      "webhookId": "b907541e-cb9c-4662-bff8-3465ca838454"
+    },
+    {
+      "id": "if_l2",
+      "name": "Level 2 Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1980, -160],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.data.approved }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_convert_req",
+      "name": "Build Convert Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [110, 0],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $json.body;\nreturn [{ json: { method: 'POST', path: `/purchase-requisitions/${b.payload.purchase_requisition_id}/convert`, idempotencyKey: `wf03-convert-${b.event_id}` } }];"
+      }
+    },
+    {
+      "id": "n_convert",
+      "name": "Convert Requisition to POs",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [220, 0],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_convert_ok",
+      "name": "Convert Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [330, -60],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_failure_alert",
+      "name": "Build Failure Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $json;\nconst prNumber = $('Execute Workflow Trigger').first().json.body.payload.requisition_number;\nconst message = (item.error_message || (item.error && item.error.message) || item.message || 'unknown error').toString().slice(0, 500);\nreturn [{ json: { text: `WF-03 approval routing failed for PR ${prNumber}: ${message}` } }];"
+      }
+    },
+    {
+      "id": "n_notify_error",
+      "name": "Notify Failure",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [660, 300],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    },
+    {
+      "id": "build_chain_req",
+      "name": "Build Create Chain Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, -60],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const po = $json;\nreturn [{ json: { method: 'POST', path: '/approvals', idempotencyKey: `wf03-approval-${po.purchase_order_id}`, body: { entity_type: 'purchase_order', entity_id: po.purchase_order_id, amount: po.total } } }];"
+      }
+    },
+    {
+      "id": "n_create_chain",
+      "name": "Create Approval Chain",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [550, -60],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_chain_ok",
+      "name": "Create Chain Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, -120],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_decide1_approve_req",
+      "name": "Build Decide L1 Approve Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1210, -60],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const id = $('Create Approval Chain').item.json.levels[0].approval_id;\nreturn [{ json: { method: 'POST', path: `/approvals/${id}/decide`, idempotencyKey: `wf03-decide-${id}`, body: { decision: 'approve' } } }];"
+      }
+    },
+    {
+      "id": "n_decide1_approve",
+      "name": "Decide Level 1 Approve",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1320, -60],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_decide1_approve_ok",
+      "name": "Decide L1 Approve Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1430, -120],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_decide1_reject_req",
+      "name": "Build Decide L1 Reject Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1210, 140],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const id = $('Create Approval Chain').item.json.levels[0].approval_id;\nreturn [{ json: { method: 'POST', path: `/approvals/${id}/decide`, idempotencyKey: `wf03-decide-${id}`, body: { decision: 'reject' } } }];"
+      }
+    },
+    {
+      "id": "n_decide1_reject",
+      "name": "Decide Level 1 Reject",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1320, 140],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_decide1_reject_ok",
+      "name": "Decide L1 Reject Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1430, 200],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_decide2_approve_req",
+      "name": "Build Decide L2 Approve Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2090, -220],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const id = $('Create Approval Chain').item.json.levels[1].approval_id;\nreturn [{ json: { method: 'POST', path: `/approvals/${id}/decide`, idempotencyKey: `wf03-decide-${id}`, body: { decision: 'approve' } } }];"
+      }
+    },
+    {
+      "id": "n_decide2_approve",
+      "name": "Decide Level 2 Approve",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [2200, -220],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_decide2_approve_ok",
+      "name": "Decide L2 Approve Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2310, -280],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_decide2_reject_req",
+      "name": "Build Decide L2 Reject Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2090, -40],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const id = $('Create Approval Chain').item.json.levels[1].approval_id;\nreturn [{ json: { method: 'POST', path: `/approvals/${id}/decide`, idempotencyKey: `wf03-decide-${id}`, body: { decision: 'reject' } } }];"
+      }
+    },
+    {
+      "id": "n_decide2_reject",
+      "name": "Decide Level 2 Reject",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [2200, -40],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_decide2_reject_ok",
+      "name": "Decide L2 Reject Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2310, 20],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_mark_approved_req",
+      "name": "Build Mark Approved Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2530, -180],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const id = $('Convert Requisition to POs').item.json.purchase_order_id;\nreturn [{ json: { method: 'POST', path: `/purchase-orders/${id}/approve`, idempotencyKey: `wf03-approve-${id}` } }];"
+      }
+    },
+    {
+      "id": "n_mark_approved",
+      "name": "Mark PO Approved",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [2640, -180],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "build_mark_rejected_req",
+      "name": "Build Mark Rejected Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 140],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const id = $('Convert Requisition to POs').item.json.purchase_order_id;\nreturn [{ json: { method: 'POST', path: `/purchase-orders/${id}/reject`, idempotencyKey: `wf03-reject-${id}`, body: { reason: 'Rejected via Telegram approval workflow' } } }];"
+      }
+    },
+    {
+      "id": "n_mark_rejected",
+      "name": "Mark PO Rejected",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [2090, 140],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "build_auto_approved_alert",
+      "name": "Build Auto-Approved Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [770, -320],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const po = $('Convert Requisition to POs').item.json;\nreturn [{ json: { text: `Auto-approved (no threshold crossed)\\nPO: ${po.po_number}\\nSupplier: ${po.supplier_name}\\nAmount: Rs.${po.total}\\nReady to send to supplier.` } }];"
+      }
+    },
+    {
+      "id": "n_notify_auto",
+      "name": "Notify Auto-Approved",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [880, -320],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    },
+    {
+      "id": "build_fully_approved_alert",
+      "name": "Build Fully Approved Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2420, -280],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const po = $('Convert Requisition to POs').item.json;\nreturn [{ json: { text: `Fully approved.\\nPO: ${po.po_number}\\nReady to send to supplier.` } }];"
+      }
+    },
+    {
+      "id": "n_notify_full",
+      "name": "Notify Fully Approved",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [2530, -280],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    },
+    {
+      "id": "build_rejected_alert",
+      "name": "Build Rejected Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 140],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const po = $('Convert Requisition to POs').item.json;\nreturn [{ json: { text: `Rejected.\\nPO: ${po.po_number}\\nSupplier: ${po.supplier_name}\\nAmount: Rs.${po.total}` } }];"
+      }
+    },
+    {
+      "id": "n_notify_rejected",
+      "name": "Notify Rejected",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1760, 140],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    }
+  ],
+  "connections": {
+    "Auto Approved?": {
+      "main": [
+        [{ "node": "Build Auto-Approved Alert", "type": "main", "index": 0 }],
+        [{ "node": "Send Level 1 Approval Card", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Level 1 Approval Card": { "main": [[{ "node": "Level 1 Approved?", "type": "main", "index": 0 }]] },
+    "Level 1 Approved?": {
+      "main": [
+        [{ "node": "Build Decide L1 Approve Request", "type": "main", "index": 0 }],
+        [{ "node": "Build Decide L1 Reject Request", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Level 2?": {
+      "main": [
+        [{ "node": "Send Level 2 Approval Card", "type": "main", "index": 0 }],
+        [{ "node": "Build Fully Approved Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Level 2 Approval Card": { "main": [[{ "node": "Level 2 Approved?", "type": "main", "index": 0 }]] },
+    "Level 2 Approved?": {
+      "main": [
+        [{ "node": "Build Decide L2 Approve Request", "type": "main", "index": 0 }],
+        [{ "node": "Build Decide L2 Reject Request", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute Workflow Trigger": { "main": [[{ "node": "Build Convert Request", "type": "main", "index": 0 }]] },
+    "Build Convert Request": { "main": [[{ "node": "Convert Requisition to POs", "type": "main", "index": 0 }]] },
+    "Convert Requisition to POs": {
+      "main": [
+        [{ "node": "Convert Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Convert Succeeded?": {
+      "main": [
+        [{ "node": "Build Create Chain Request", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Failure Alert": { "main": [[{ "node": "Notify Failure", "type": "main", "index": 0 }]] },
+    "Build Create Chain Request": { "main": [[{ "node": "Create Approval Chain", "type": "main", "index": 0 }]] },
+    "Create Approval Chain": {
+      "main": [
+        [{ "node": "Create Chain Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create Chain Succeeded?": {
+      "main": [
+        [{ "node": "Auto Approved?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Decide L1 Approve Request": { "main": [[{ "node": "Decide Level 1 Approve", "type": "main", "index": 0 }]] },
+    "Decide Level 1 Approve": {
+      "main": [
+        [{ "node": "Decide L1 Approve Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Decide L1 Approve Succeeded?": {
+      "main": [
+        [{ "node": "Has Level 2?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Decide L1 Reject Request": { "main": [[{ "node": "Decide Level 1 Reject", "type": "main", "index": 0 }]] },
+    "Decide Level 1 Reject": {
+      "main": [
+        [{ "node": "Decide L1 Reject Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Decide L1 Reject Succeeded?": {
+      "main": [
+        [{ "node": "Build Rejected Alert", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Decide L2 Approve Request": { "main": [[{ "node": "Decide Level 2 Approve", "type": "main", "index": 0 }]] },
+    "Decide Level 2 Approve": {
+      "main": [
+        [{ "node": "Decide L2 Approve Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Decide L2 Approve Succeeded?": {
+      "main": [
+        [{ "node": "Build Fully Approved Alert", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Decide L2 Reject Request": { "main": [[{ "node": "Decide Level 2 Reject", "type": "main", "index": 0 }]] },
+    "Decide Level 2 Reject": {
+      "main": [
+        [{ "node": "Decide L2 Reject Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Decide L2 Reject Succeeded?": {
+      "main": [
+        [{ "node": "Build Rejected Alert", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Mark Approved Request": { "main": [[{ "node": "Mark PO Approved", "type": "main", "index": 0 }]] },
+    "Mark PO Approved": { "main": [[], [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]] },
+    "Build Mark Rejected Request": { "main": [[{ "node": "Mark PO Rejected", "type": "main", "index": 0 }]] },
+    "Mark PO Rejected": { "main": [[], [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]] },
+    "Build Auto-Approved Alert": { "main": [[{ "node": "Notify Auto-Approved", "type": "main", "index": 0 }]] },
+    "Build Fully Approved Alert": { "main": [[{ "node": "Notify Fully Approved", "type": "main", "index": 0 }]] },
+    "Build Rejected Alert": { "main": [[{ "node": "Notify Rejected", "type": "main", "index": 0 }]] },
+    "Notify Auto-Approved": { "main": [[{ "node": "Build Mark Approved Request", "type": "main", "index": 0 }]] },
+    "Notify Fully Approved": { "main": [[{ "node": "Build Mark Approved Request", "type": "main", "index": 0 }]] },
+    "Notify Rejected": { "main": [[{ "node": "Build Mark Rejected Request", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "errorWorkflow": "5IMTtBDvmPUTxLti" }
+}

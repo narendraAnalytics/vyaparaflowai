@@ -1,0 +1,272 @@
+{
+  "id": "r1rPbxs8tE9VYIvk",
+  "name": "WF-04 Send PO to Supplier",
+  "active": true,
+  "nodes": [
+    {
+      "id": "ewt1",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": { "inputSource": "passthrough" }
+    },
+    {
+      "id": "if_has_email",
+      "name": "Has Supplier Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.supplier_email }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty", "singleValue": true } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n_get_pdf",
+      "name": "Get PO PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, -80],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=http://host.docker.internal:8000/api/v1/purchase-orders/{{ $('Get PO Detail').item.json.purchase_order_id }}/pdf",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Idempotency-Key", "value": "=wf04-pdf-{{ $('Get PO Detail').item.json.purchase_order_id }}" }] },
+        "options": { "response": { "response": { "responseFormat": "file" } } }
+      },
+      "credentials": { "httpHeaderAuth": { "id": "qOvICABHKCMOYsZe", "name": "FastAPI Header Auth" } }
+    },
+    {
+      "id": "n_pdf_b64",
+      "name": "PDF To Base64",
+      "type": "n8n-nodes-base.moveBinaryData",
+      "typeVersion": 1.1,
+      "position": [880, -80],
+      "parameters": { "mode": "binaryToJson", "sourceKey": "data", "setAllData": false, "destinationKey": "pdf_base64" }
+    },
+    {
+      "id": "n_send_email",
+      "name": "Send PO Email via Resend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, -80],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { from: \"VyaparaFlow <admin@buildflows.shop>\", to: [ $('Get PO Detail').item.json.supplier_email ], subject: \"Purchase Order \" + $('Get PO Detail').item.json.po_number + \" - VyaparaFlow\", html: \"<p>Dear \" + $('Get PO Detail').item.json.supplier_name + \",</p><p>Please find attached Purchase Order \" + $('Get PO Detail').item.json.po_number + \" for a total of Rs.\" + $('Get PO Detail').item.json.total + \".</p><p>Regards,<br/>VyaparaFlow (Sri Lakshmi Hardware & Electricals)</p>\", attachments: [ { filename: $('Get PO Detail').item.json.po_number + \".pdf\", content: $json.pdf_base64 } ] } }}",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "id": "1AJh9LVRJQ0cBmd5", "name": "Resend" } },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "build_get_po_req",
+      "name": "Build Get PO Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [110, 0],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const id = $json.body.payload.purchase_order_id;\nreturn [{ json: { method: 'GET', path: `/purchase-orders/${id}` } }];"
+      }
+    },
+    {
+      "id": "n_get_po",
+      "name": "Get PO Detail",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [220, 0],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_get_po_ok",
+      "name": "Get PO Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [330, -60],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_mark_sent_req",
+      "name": "Build Mark Sent Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1210, -80],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const id = $('Get PO Detail').item.json.purchase_order_id;\nreturn [{ json: { method: 'POST', path: `/purchase-orders/${id}/mark-sent`, idempotencyKey: `wf04-mark-sent-${id}` } }];"
+      }
+    },
+    {
+      "id": "n_mark_sent",
+      "name": "Mark PO Sent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1320, -80],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_mark_sent_ok",
+      "name": "Mark Sent Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1430, -140],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_failure_alert",
+      "name": "Build Failure Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $json;\nconst poId = $('Execute Workflow Trigger').first().json.body.payload.purchase_order_id;\nconst message = (item.error_message || (item.error && item.error.message) || item.message || 'unknown error').toString().slice(0, 500);\nreturn [{ json: { text: `WF-04 send-PO-to-supplier failed for PO ${poId}: ${message}` } }];"
+      }
+    },
+    {
+      "id": "tg_notify_error",
+      "name": "Notify Failure",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [660, 300],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    },
+    {
+      "id": "build_no_email_alert",
+      "name": "Build No Email Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [550, 140],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const po = $('Get PO Detail').item.json;\nreturn [{ json: { text: `WF-04 could not send PO ${po.po_number}: supplier ${po.supplier_name} has no email on file.` } }];"
+      }
+    },
+    {
+      "id": "tg_notify_no_email",
+      "name": "Notify No Supplier Email",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [660, 140],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    },
+    {
+      "id": "build_sent_alert",
+      "name": "Build Sent Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, -140],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const po = $('Get PO Detail').item.json;\nreturn [{ json: { text: `PO emailed to supplier.\\nPO: ${po.po_number}\\nSupplier: ${po.supplier_name} (${po.supplier_email})\\nAmount: Rs.${po.total}` } }];"
+      }
+    },
+    {
+      "id": "tg_notify_sent",
+      "name": "Notify Sent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1650, -140],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    }
+  ],
+  "connections": {
+    "Has Supplier Email?": {
+      "main": [
+        [{ "node": "Get PO PDF", "type": "main", "index": 0 }],
+        [{ "node": "Build No Email Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get PO PDF": {
+      "main": [
+        [{ "node": "PDF To Base64", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "PDF To Base64": { "main": [[{ "node": "Send PO Email via Resend", "type": "main", "index": 0 }]] },
+    "Execute Workflow Trigger": { "main": [[{ "node": "Build Get PO Request", "type": "main", "index": 0 }]] },
+    "Build Get PO Request": { "main": [[{ "node": "Get PO Detail", "type": "main", "index": 0 }]] },
+    "Get PO Detail": {
+      "main": [
+        [{ "node": "Get PO Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get PO Succeeded?": {
+      "main": [
+        [{ "node": "Has Supplier Email?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send PO Email via Resend": {
+      "main": [
+        [{ "node": "Build Mark Sent Request", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Mark Sent Request": { "main": [[{ "node": "Mark PO Sent", "type": "main", "index": 0 }]] },
+    "Mark PO Sent": {
+      "main": [
+        [{ "node": "Mark Sent Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark Sent Succeeded?": {
+      "main": [
+        [{ "node": "Build Sent Alert", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Failure Alert": { "main": [[{ "node": "Notify Failure", "type": "main", "index": 0 }]] },
+    "Build No Email Alert": { "main": [[{ "node": "Notify No Supplier Email", "type": "main", "index": 0 }]] },
+    "Build Sent Alert": { "main": [[{ "node": "Notify Sent", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "errorWorkflow": "5IMTtBDvmPUTxLti"
+  }
+}

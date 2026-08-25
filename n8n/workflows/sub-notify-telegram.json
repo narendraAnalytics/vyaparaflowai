@@ -1,0 +1,44 @@
+{
+  "id": "8dvhIveKTf5nCaw4",
+  "name": "Sub - Notify Telegram",
+  "active": true,
+  "nodes": [
+    {
+      "id": "trig",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": { "inputSource": "passthrough" }
+    },
+    {
+      "id": "tg_send",
+      "name": "Send Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [220, 0],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chatId || '8960247246' }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": { "parse_mode": "none" }
+      },
+      "credentials": { "telegramApi": { "id": "SQUcKPNAvIu2pp1K", "name": "Telegram Bot" } },
+      "webhookId": "adacacf6-b107-4f8e-b2bb-862b50662b93",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": { "main": [[{ "node": "Send Telegram", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  }
+}

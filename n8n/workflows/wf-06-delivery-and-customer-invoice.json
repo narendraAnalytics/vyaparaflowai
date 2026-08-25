@@ -1,0 +1,354 @@
+{
+  "id": "bsf4Kugte9dV7Fqd",
+  "name": "WF-06 Delivery and Customer Invoice",
+  "active": true,
+  "nodes": [
+    {
+      "id": "webhook1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "parameters": { "httpMethod": "POST", "path": "wf06-dispatch-invoice", "responseMode": "responseNode", "authentication": "headerAuth", "options": {} },
+      "credentials": { "httpHeaderAuth": { "id": "udkxc0zIFZrXdhag", "name": "Inbound Webhook Auth" } },
+      "webhookId": "b634a927-7faf-49b4-80c5-e5bfb26fff37"
+    },
+    {
+      "id": "if_validate",
+      "name": "Validate Payload",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [220, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.body.sales_order_id }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } },
+            { "leftValue": "={{ $json.body.warehouse_id }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } },
+            { "leftValue": "={{ $json.body.lines }}", "rightValue": "", "operator": { "type": "array", "operation": "notEmpty", "singleValue": true } },
+            { "leftValue": "={{ $json.headers['idempotency-key'] }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "respond_error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, 100],
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": { "responseCode": "={{ $json.statusCode || 502 }}" } }
+    },
+    {
+      "id": "respond_invalid",
+      "name": "Respond Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [220, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"error\": \"invalid_payload\", \"detail\": \"sales_order_id, warehouse_id, non-empty lines, and an Idempotency-Key header are all required\" } }}",
+        "options": { "responseCode": 400 }
+      }
+    },
+    {
+      "id": "noop_invoice_created",
+      "name": "Invoice Created",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [880, -80],
+      "parameters": {}
+    },
+    {
+      "id": "respond_success",
+      "name": "Respond Dispatch Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, -180],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"accepted\", \"customer_invoice_id\": $json.customer_invoice_id, \"invoice_number\": $json.invoice_number, \"total\": $json.total } }}",
+        "options": { "responseCode": 202 }
+      }
+    },
+    {
+      "id": "http_get_pdf",
+      "name": "Get Invoice PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=http://host.docker.internal:8000/api/v1/customer-invoices/{{ $json.customer_invoice_id }}/pdf",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Idempotency-Key", "value": "=wf06-pdf-{{ $json.customer_invoice_id }}" }] },
+        "options": { "response": { "response": { "responseFormat": "file" } } }
+      },
+      "credentials": { "httpHeaderAuth": { "id": "qOvICABHKCMOYsZe", "name": "FastAPI Header Auth" } }
+    },
+    {
+      "id": "n_pdf_b64",
+      "name": "PDF To Base64",
+      "type": "n8n-nodes-base.moveBinaryData",
+      "typeVersion": 1.1,
+      "position": [1320, 0],
+      "parameters": { "mode": "binaryToJson", "sourceKey": "data", "setAllData": false, "destinationKey": "pdf_base64" }
+    },
+    {
+      "id": "http_send_email",
+      "name": "Send Invoice Email via Resend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { from: \"VyaparaFlow <admin@buildflows.shop>\", to: [ $('Create Customer Invoice').item.json.customer_email ], subject: \"Tax Invoice \" + $('Create Customer Invoice').item.json.invoice_number + \" - VyaparaFlow\", html: \"<p>Dear \" + $('Create Customer Invoice').item.json.customer_name + \",</p><p>Please find attached your invoice \" + $('Create Customer Invoice').item.json.invoice_number + \" for a total of Rs.\" + $('Create Customer Invoice').item.json.total + \".</p><p>Regards,<br/>VyaparaFlow (Sri Lakshmi Hardware & Electricals)</p>\", attachments: [ { filename: $('Create Customer Invoice').item.json.invoice_number + \".pdf\", content: $json.pdf_base64 } ] } }}",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "id": "1AJh9LVRJQ0cBmd5", "name": "Resend" } },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "build_delivery_req",
+      "name": "Build Delivery Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [330, -80],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json;\nreturn [{ json: { method: 'POST', path: '/deliveries', idempotencyKey: item.headers['idempotency-key'] + '-delivery', body: item.body } }];"
+      }
+    },
+    {
+      "id": "http_create_delivery",
+      "name": "Create Delivery",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [440, -80],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_delivery_ok",
+      "name": "Delivery Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [550, -140],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_invoice_req",
+      "name": "Build Invoice Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, -140],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const key = $('Webhook').item.json.headers['idempotency-key'];\nreturn [{ json: { method: 'POST', path: '/customer-invoices', idempotencyKey: key + '-invoice', body: { delivery_id: $json.delivery_id } } }];"
+      }
+    },
+    {
+      "id": "http_create_invoice",
+      "name": "Create Customer Invoice",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [770, -140],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_invoice_ok",
+      "name": "Invoice Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [880, -200],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_mark_sent_req",
+      "name": "Build Mark Sent Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, -80],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const id = $('Create Customer Invoice').item.json.customer_invoice_id;\nreturn [{ json: { method: 'POST', path: `/customer-invoices/${id}/mark-sent`, idempotencyKey: `wf06-mark-sent-${id}` } }];"
+      }
+    },
+    {
+      "id": "http_mark_sent",
+      "name": "Mark Invoice Sent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1760, -80],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_mark_sent_ok",
+      "name": "Mark Sent Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1870, -140],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_failure_alert",
+      "name": "Build Failure Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 260],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $json;\nconst soId = $('Webhook').item.json.body.sales_order_id;\nconst message = (item.error_message || (item.error && item.error.message) || item.message || 'unknown error').toString().slice(0, 500);\nreturn [{ json: { text: `WF-06 could not finish emailing invoice for SO ${soId}: ${message}` } }];"
+      }
+    },
+    {
+      "id": "tg_notify_failure",
+      "name": "Notify Failure",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1440, 260],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    },
+    {
+      "id": "build_sent_alert",
+      "name": "Build Sent Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, -200],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const inv = $('Create Customer Invoice').item.json;\nreturn [{ json: { text: `Invoice emailed to customer.\\nInvoice: ${inv.invoice_number}\\nCustomer: ${inv.customer_name} (${inv.customer_email})\\nAmount: Rs.${inv.total}` } }];"
+      }
+    },
+    {
+      "id": "tg_notify_sent",
+      "name": "Notify Invoice Sent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [2090, -200],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Validate Payload", "type": "main", "index": 0 }]] },
+    "Validate Payload": {
+      "main": [
+        [{ "node": "Build Delivery Request", "type": "main", "index": 0 }],
+        [{ "node": "Respond Invalid", "type": "main", "index": 0 }]
+      ]
+    },
+    "Invoice Created": {
+      "main": [
+        [
+          { "node": "Respond Dispatch Accepted", "type": "main", "index": 0 },
+          { "node": "Get Invoice PDF", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Get Invoice PDF": {
+      "main": [
+        [{ "node": "PDF To Base64", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "PDF To Base64": { "main": [[{ "node": "Send Invoice Email via Resend", "type": "main", "index": 0 }]] },
+    "Build Delivery Request": { "main": [[{ "node": "Create Delivery", "type": "main", "index": 0 }]] },
+    "Create Delivery": {
+      "main": [
+        [{ "node": "Delivery Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Delivery Succeeded?": {
+      "main": [
+        [{ "node": "Build Invoice Request", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Invoice Request": { "main": [[{ "node": "Create Customer Invoice", "type": "main", "index": 0 }]] },
+    "Create Customer Invoice": {
+      "main": [
+        [{ "node": "Invoice Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Invoice Succeeded?": {
+      "main": [
+        [{ "node": "Invoice Created", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Invoice Email via Resend": {
+      "main": [
+        [{ "node": "Build Mark Sent Request", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Mark Sent Request": { "main": [[{ "node": "Mark Invoice Sent", "type": "main", "index": 0 }]] },
+    "Mark Invoice Sent": {
+      "main": [
+        [{ "node": "Mark Sent Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark Sent Succeeded?": {
+      "main": [
+        [{ "node": "Build Sent Alert", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Sent Alert": { "main": [[{ "node": "Notify Invoice Sent", "type": "main", "index": 0 }]] },
+    "Build Failure Alert": { "main": [[{ "node": "Notify Failure", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "errorWorkflow": "5IMTtBDvmPUTxLti"
+  }
+}

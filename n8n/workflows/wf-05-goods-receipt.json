@@ -1,0 +1,300 @@
+{
+  "id": "2QVSCD19Q3HjTsJI",
+  "name": "WF-05 Goods Receipt",
+  "active": true,
+  "nodes": [
+    {
+      "id": "webhook1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "parameters": { "httpMethod": "POST", "path": "wf05-goods-receipt", "responseMode": "responseNode", "authentication": "headerAuth", "options": {} },
+      "credentials": { "httpHeaderAuth": { "id": "udkxc0zIFZrXdhag", "name": "Inbound Webhook Auth" } },
+      "webhookId": "f96c46fa-c707-4aa2-b33a-096e7e6c4eed"
+    },
+    {
+      "id": "if_validate",
+      "name": "Validate Payload",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [220, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.body.purchase_order_id }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } },
+            { "leftValue": "={{ $json.body.warehouse_id }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } },
+            { "leftValue": "={{ $json.body.received_date }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } },
+            { "leftValue": "={{ $json.body.lines }}", "rightValue": "", "operator": { "type": "array", "operation": "notEmpty", "singleValue": true } },
+            { "leftValue": "={{ $json.headers['idempotency-key'] }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "respond_success",
+      "name": "Respond GRN Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, -180],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"accepted\", \"goods_receipt_id\": $json.goods_receipt_id, \"grn_number\": $json.grn_number, \"purchase_order_status\": $json.purchase_order_status } }}",
+        "options": { "responseCode": 202 }
+      }
+    },
+    {
+      "id": "respond_error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, 20],
+      "parameters": { "respondWith": "json", "responseBody": "={{ $json }}", "options": { "responseCode": "={{ $json.statusCode || 502 }}" } }
+    },
+    {
+      "id": "respond_invalid",
+      "name": "Respond Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [220, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"error\": \"invalid_payload\", \"detail\": \"purchase_order_id, warehouse_id, received_date, non-empty lines, and an Idempotency-Key header are all required\" } }}",
+        "options": { "responseCode": 400 }
+      }
+    },
+    {
+      "id": "if_damaged",
+      "name": "Has Damaged Or Rejected?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 140],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.lines.some(l => Number(l.rejected_quantity) > 0 || Number(l.damaged_quantity) > 0) }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "if_triggered_by_so",
+      "name": "Triggered By Sales Order?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 320],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.triggered_by_sales_order_id }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "noop_grn_created",
+      "name": "GRN Created",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [660, -80],
+      "parameters": {}
+    },
+    {
+      "id": "build_grn_req",
+      "name": "Build FastAPI Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [330, -80],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json;\nreturn [{ json: { method: 'POST', path: '/goods-receipts', idempotencyKey: item.headers['idempotency-key'], body: item.body } }];"
+      }
+    },
+    {
+      "id": "http_create_grn",
+      "name": "Call Goods Receipt API",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [440, -80],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_grn_ok",
+      "name": "GRN Call Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [550, -140],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_retry_req",
+      "name": "Build Retry Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 320],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $json;\nconst warehouseId = $('Webhook').item.json.body.warehouse_id;\nconst grnId = $('Call Goods Receipt API').item.json.goods_receipt_id;\nreturn [{ json: { method: 'POST', path: `/sales-orders/${item.triggered_by_sales_order_id}/retry-reservation?warehouse_id=${warehouseId}`, idempotencyKey: `wf05-retry-${grnId}` } }];"
+      }
+    },
+    {
+      "id": "http_retry_reservation",
+      "name": "Retry Sales Order Reservation",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1000, 320],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_retry_ok",
+      "name": "Retry Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 260],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_retry_ok_alert",
+      "name": "Build Retry Success Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1240, 200],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const r = $json;\nreturn [{ json: { text: `Stock arrived for a waiting sales order - reservation retried.\\nSales Order: ${r.sales_order_id}\\nNew status: ${r.status}` } }];"
+      }
+    },
+    {
+      "id": "tg_notify_reserved",
+      "name": "Notify Reservation Retry Result",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1360, 200],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    },
+    {
+      "id": "build_retry_fail_alert",
+      "name": "Build Retry Failure Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1240, 400],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $json;\nconst poId = $('Webhook').item.json.body.purchase_order_id;\nconst message = (item.error_message || item.message || 'unknown error').toString().slice(0, 500);\nreturn [{ json: { text: `WF-05 could not retry reservation for sales order ${poId}'s GRN: ${message}` } }];"
+      }
+    },
+    {
+      "id": "tg_notify_retry_failed",
+      "name": "Notify Retry Failed",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1360, 400],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    },
+    {
+      "id": "build_damaged_alert",
+      "name": "Build Damaged Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [770, 140],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const j = $json;\nconst lines = j.lines.map(l => `${l.product_id}: received ${l.received_quantity}, accepted ${l.accepted_quantity}, rejected ${l.rejected_quantity}, damaged ${l.damaged_quantity}`).join('\\n');\nreturn [{ json: { text: `GRN ${j.grn_number} has short/damaged lines - please review.\\nPO status: ${j.purchase_order_status}\\nLines: ${lines}` } }];"
+      }
+    },
+    {
+      "id": "tg_notify_damaged",
+      "name": "Notify Purchase - Short/Damaged",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [890, 140],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Validate Payload", "type": "main", "index": 0 }]] },
+    "Validate Payload": {
+      "main": [
+        [{ "node": "Build FastAPI Request", "type": "main", "index": 0 }],
+        [{ "node": "Respond Invalid", "type": "main", "index": 0 }]
+      ]
+    },
+    "GRN Created": {
+      "main": [
+        [
+          { "node": "Respond GRN Accepted", "type": "main", "index": 0 },
+          { "node": "Has Damaged Or Rejected?", "type": "main", "index": 0 },
+          { "node": "Triggered By Sales Order?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build FastAPI Request": { "main": [[{ "node": "Call Goods Receipt API", "type": "main", "index": 0 }]] },
+    "Call Goods Receipt API": {
+      "main": [
+        [{ "node": "GRN Call Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "GRN Call Succeeded?": {
+      "main": [
+        [{ "node": "GRN Created", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Triggered By Sales Order?": { "main": [[{ "node": "Build Retry Request", "type": "main", "index": 0 }]] },
+    "Build Retry Request": { "main": [[{ "node": "Retry Sales Order Reservation", "type": "main", "index": 0 }]] },
+    "Retry Sales Order Reservation": {
+      "main": [
+        [{ "node": "Retry Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Build Retry Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Retry Succeeded?": {
+      "main": [
+        [{ "node": "Build Retry Success Alert", "type": "main", "index": 0 }],
+        [{ "node": "Build Retry Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Retry Success Alert": { "main": [[{ "node": "Notify Reservation Retry Result", "type": "main", "index": 0 }]] },
+    "Build Retry Failure Alert": { "main": [[{ "node": "Notify Retry Failed", "type": "main", "index": 0 }]] },
+    "Has Damaged Or Rejected?": { "main": [[{ "node": "Build Damaged Alert", "type": "main", "index": 0 }]] },
+    "Build Damaged Alert": { "main": [[{ "node": "Notify Purchase - Short/Damaged", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "errorWorkflow": "5IMTtBDvmPUTxLti"
+  }
+}

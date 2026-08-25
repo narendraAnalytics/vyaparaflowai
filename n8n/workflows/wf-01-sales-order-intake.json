@@ -1,0 +1,161 @@
+{
+  "id": "nXOZFh4bjqZIdiXE",
+  "name": "WF-01 Sales Order Intake",
+  "active": true,
+  "nodes": [
+    {
+      "id": "webhook1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf01-sales-order-intake",
+        "responseMode": "responseNode",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": { "id": "udkxc0zIFZrXdhag", "name": "Inbound Webhook Auth" }
+      },
+      "webhookId": "f2e64e2c-a531-4269-8225-42f320296437"
+    },
+    {
+      "id": "if1",
+      "name": "Validate Payload",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [220, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.body.customer_id }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } },
+            { "leftValue": "={{ $json.body.warehouse_id }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } },
+            { "leftValue": "={{ $json.body.lines }}", "rightValue": "", "operator": { "type": "array", "operation": "notEmpty", "singleValue": true } },
+            { "leftValue": "={{ $json.headers['idempotency-key'] }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "respond_success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, -60],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"accepted\", \"sales_order_id\": $json.sales_order_id, \"order_number\": $json.order_number, \"order_status\": $json.status, \"has_shortage\": $json.has_shortage } }}",
+        "options": { "responseCode": 202 }
+      }
+    },
+    {
+      "id": "respond_error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, 60],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": { "responseCode": "={{ $json.statusCode || 502 }}" }
+      }
+    },
+    {
+      "id": "respond_invalid",
+      "name": "Respond Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [220, 160],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"error\": \"invalid_payload\", \"detail\": \"customer_id, warehouse_id, non-empty lines, and an Idempotency-Key header are all required\" } }}",
+        "options": { "responseCode": 400 }
+      }
+    },
+    {
+      "id": "build_req",
+      "name": "Build FastAPI Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [330, -60],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json;\nreturn [{\n  json: {\n    method: 'POST',\n    path: '/sales-orders',\n    idempotencyKey: item.headers['idempotency-key'],\n    body: item.body\n  }\n}];"
+      }
+    },
+    {
+      "id": "http1",
+      "name": "Call Sales Order API",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [440, -60],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "build_tg",
+      "name": "Build Failure Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const err = $json;\nconst customerId = $('Validate Payload').item.json.body.customer_id;\nconst message = (err.error_message || (err.error && err.error.message) || err.message || 'unknown error').toString().slice(0, 500);\nreturn [{ json: { text: `WF-01 sales-order-intake failed for customer ${customerId}: ${message}` } }];"
+      }
+    },
+    {
+      "id": "tg_notify_failure",
+      "name": "Notify Failure",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [880, 300],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    },
+    {
+      "id": "if_succeeded",
+      "name": "FastAPI Call Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, -100],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Validate Payload", "type": "main", "index": 0 }]] },
+    "Validate Payload": {
+      "main": [
+        [{ "node": "Build FastAPI Request", "type": "main", "index": 0 }],
+        [{ "node": "Respond Invalid", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build FastAPI Request": { "main": [[{ "node": "Call Sales Order API", "type": "main", "index": 0 }]] },
+    "Build Failure Alert": { "main": [[{ "node": "Notify Failure", "type": "main", "index": 0 }]] },
+    "Call Sales Order API": {
+      "main": [
+        [{ "node": "FastAPI Call Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "FastAPI Call Succeeded?": {
+      "main": [
+        [{ "node": "Respond Success", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }, { "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1", "errorWorkflow": "5IMTtBDvmPUTxLti" }
+}

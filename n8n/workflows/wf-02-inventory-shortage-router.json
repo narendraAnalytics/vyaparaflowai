@@ -1,0 +1,191 @@
+{
+  "id": "dKy2vyhdNmamIiSG",
+  "name": "WF-02 Inventory Shortage Router",
+  "active": true,
+  "nodes": [
+    {
+      "id": "ewt1",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": { "inputSource": "passthrough" }
+    },
+    {
+      "id": "code_build",
+      "name": "Build Requisition Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, -60],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const triggerData = $('Execute Workflow Trigger').first().json;\nconst eventPayload = triggerData.body.payload;\nconst eventId = triggerData.body.event_id;\nconst shortageLines = $input.all().map(item => item.json);\n\nif (!shortageLines.length) {\n  return [{ json: { skip: true } }];\n}\n\nconst lines = shortageLines\n  .filter(line => Number(line.recommended_qty) > 0)\n  .map(line => ({\n    product_id: line.product_id,\n    quantity: line.recommended_qty,\n    reason: `Auto-generated from sales order ${eventPayload.order_number} shortage`\n  }));\n\nif (!lines.length) {\n  return [{ json: { skip: true } }];\n}\n\nreturn [{\n  json: {\n    skip: false,\n    idempotencyKey: `wf02-${eventId}`,\n    method: 'POST',\n    path: '/purchase-requisitions',\n    orderNumber: eventPayload.order_number,\n    salesOrderId: eventPayload.sales_order_id,\n    body: {\n      lines,\n      triggered_by_sales_order_id: eventPayload.sales_order_id,\n      notes: `Auto-generated: shortage detected on sales order ${eventPayload.order_number}`\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "if_hasshortage",
+      "name": "Has Shortage Lines?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, -60],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.skip }}", "rightValue": false, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "noop_end",
+      "name": "No Shortage Remaining",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [880, 40],
+      "parameters": {}
+    },
+    {
+      "id": "build_get_shortages",
+      "name": "Build Get Shortages Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [110, 0],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const p = $json.body.payload;\nreturn [{ json: { method: 'GET', path: `/sales-orders/${p.sales_order_id}/shortages?warehouse_id=${p.warehouse_id}` } }];"
+      }
+    },
+    {
+      "id": "http_get_shortages",
+      "name": "Get Live Shortages",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [220, 0],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_get_ok",
+      "name": "Get Shortages Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [330, -60],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_alert",
+      "name": "Build Failure Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 260],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $json;\nconst orderNumber = $('Execute Workflow Trigger').first().json.body.payload.order_number;\nconst message = (item.error_message || item.message || 'unknown error').toString().slice(0, 500);\nreturn [{ json: { text: `WF-02 shortage router failed on SO ${orderNumber}: ${message}` } }];"
+      }
+    },
+    {
+      "id": "telegram_error",
+      "name": "Notify Failure",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [880, 260],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    },
+    {
+      "id": "http_post_pr",
+      "name": "Create Purchase Requisition",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [880, -120],
+      "parameters": { "source": "database", "workflowId": "lECXPT0fTzeIExZ3", "mode": "once" },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "if_pr_ok",
+      "name": "Create PR Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, -180],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.success }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "build_purchase_alert",
+      "name": "Build Purchase Team Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, -240],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const r = $json;\nconst orderNumber = $('Build Requisition Payload').item.json.orderNumber;\nreturn [{ json: { text: `Shortage auto-PR created\\nSales Order: ${orderNumber}\\nRequisition: ${r.requisition_number}\\nStatus: ${r.status}\\nReview and approve in the system.` } }];"
+      }
+    },
+    {
+      "id": "telegram_notify",
+      "name": "Notify Purchase Team",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1240, -240],
+      "parameters": { "source": "database", "workflowId": "8dvhIveKTf5nCaw4", "mode": "once" }
+    }
+  ],
+  "connections": {
+    "Build Requisition Payload": { "main": [[{ "node": "Has Shortage Lines?", "type": "main", "index": 0 }]] },
+    "Has Shortage Lines?": {
+      "main": [
+        [{ "node": "Create Purchase Requisition", "type": "main", "index": 0 }],
+        [{ "node": "No Shortage Remaining", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute Workflow Trigger": { "main": [[{ "node": "Build Get Shortages Request", "type": "main", "index": 0 }]] },
+    "Build Get Shortages Request": { "main": [[{ "node": "Get Live Shortages", "type": "main", "index": 0 }]] },
+    "Get Live Shortages": {
+      "main": [
+        [{ "node": "Get Shortages Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Shortages Succeeded?": {
+      "main": [
+        [{ "node": "Build Requisition Payload", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Failure Alert": { "main": [[{ "node": "Notify Failure", "type": "main", "index": 0 }]] },
+    "Create Purchase Requisition": {
+      "main": [
+        [{ "node": "Create PR Succeeded?", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create PR Succeeded?": {
+      "main": [
+        [{ "node": "Build Purchase Team Alert", "type": "main", "index": 0 }],
+        [{ "node": "Build Failure Alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Purchase Team Alert": { "main": [[{ "node": "Notify Purchase Team", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "errorWorkflow": "5IMTtBDvmPUTxLti" }
+}
