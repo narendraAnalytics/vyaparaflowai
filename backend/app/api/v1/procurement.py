@@ -20,6 +20,7 @@ from app.services.procurement import (
     CreatePurchaseOrderResult,
     CreateRequisitionRequest,
     CreateRequisitionResult,
+    PurchaseOrderDetailResult,
     PurchaseOrderStatusResult,
     ShortageLine,
     SupplierScore,
@@ -28,6 +29,7 @@ from app.services.procurement import (
     detect_shortage_from_sales_order,
     detect_shortages,
     generate_purchase_order_pdf,
+    get_purchase_order,
     mark_purchase_order_approved,
     mark_purchase_order_rejected,
     mark_purchase_order_sent,
@@ -157,6 +159,24 @@ async def convert_purchase_requisition_endpoint(
 
 class RejectPurchaseOrderRequest(BaseModel):
     reason: str | None = None
+
+
+@router.get(
+    "/purchase-orders/{purchase_order_id}",
+    response_model=PurchaseOrderDetailResult,
+    operation_id="getPurchaseOrder",
+    summary="Fetch a PO's current status and supplier contact details",
+    description=(
+        "WF-04's live re-fetch, once purchase_order.approved fires - the outbox payload "
+        "deliberately carries only IDs, never supplier contact details or money figures."
+    ),
+)
+async def get_purchase_order_endpoint(
+    purchase_order_id: uuid.UUID,
+    user: User = Depends(get_current_user),  # noqa: B008
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> PurchaseOrderDetailResult:
+    return await get_purchase_order(db, org_id=user.org_id, purchase_order_id=purchase_order_id)
 
 
 @router.post(

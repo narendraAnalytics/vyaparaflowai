@@ -124,6 +124,10 @@ class CustomerInvoice(UUIDPkMixin, TimestampMixin, Base):
         UniqueConstraint(
             "org_id", "invoice_number", name="uq_customer_invoices_org_id_invoice_number"
         ),
+        # One invoice per delivery (roadmap.txt 3.9, WF-06) — the DB-level
+        # guard against double-billing the same shipment, same role the
+        # NULL-excluded unique index below plays for the FK itself.
+        UniqueConstraint("delivery_id", name="uq_customer_invoices_delivery_id"),
         CheckConstraint(
             f"status IN ({check_values(*InvoiceStatus)})", name="ck_customer_invoices_status"
         ),
@@ -149,6 +153,12 @@ class CustomerInvoice(UUIDPkMixin, TimestampMixin, Base):
     sales_order_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("sales_orders.id", ondelete="RESTRICT")
     )
+    # Which delivery this invoice bills (roadmap.txt 3.9, WF-06) — nullable
+    # because a counter sale (2.7) and any pre-3.9 invoice have no delivery
+    # at all. Mirrors purchase_orders.pdf_storage_uri's pattern below.
+    delivery_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("deliveries.id", ondelete="RESTRICT")
+    )
     invoice_number: Mapped[str] = mapped_column(String(30), nullable=False)
     invoice_date: Mapped[date] = mapped_column(Date, nullable=False)
     due_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -157,6 +167,9 @@ class CustomerInvoice(UUIDPkMixin, TimestampMixin, Base):
     tax_total: Mapped[float] = mapped_column(Numeric(14, 2), default=0, nullable=False)
     total: Mapped[float] = mapped_column(Numeric(14, 2), default=0, nullable=False)
     amount_paid: Mapped[float] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    # Set once generate_customer_invoice_pdf() renders + uploads it (3.9) -
+    # same pattern as purchase_orders.pdf_storage_uri (3.7).
+    pdf_storage_uri: Mapped[str | None] = mapped_column(String(500))
     # GST e-Invoice (Phase 5) — nullable until the IRP call is actually made.
     irn: Mapped[str | None] = mapped_column(String(64))
     irn_qr_code: Mapped[str | None] = mapped_column(String)

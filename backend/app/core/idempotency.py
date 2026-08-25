@@ -209,7 +209,14 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                     if 200 <= response.status_code < 300:
                         try:
                             parsed = json.loads(response_body) if response_body else None
-                        except json.JSONDecodeError:
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            # A binary response (e.g. the PDF endpoint's raw
+                            # bytes) isn't JSON at all, not just malformed
+                            # JSON - json.loads raises UnicodeDecodeError
+                            # for non-UTF-8 bytes before it ever gets to
+                            # parsing, which json.JSONDecodeError alone
+                            # doesn't catch. Same "skip caching, don't
+                            # crash the request" behavior either way.
                             parsed = None
                         if parsed is not None:
                             row.response = parsed

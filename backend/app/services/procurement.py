@@ -658,6 +658,44 @@ async def _load_purchase_order(
     return po
 
 
+class PurchaseOrderDetailResult(BaseModel):
+    purchase_order_id: uuid.UUID
+    po_number: str
+    status: str
+    supplier_id: uuid.UUID
+    supplier_name: str
+    supplier_email: str | None
+    total: Decimal
+    order_date: date
+
+
+async def get_purchase_order(
+    session: AsyncSession, *, org_id: uuid.UUID, purchase_order_id: uuid.UUID
+) -> PurchaseOrderDetailResult:
+    """Read-only detail lookup, added for WF-04 (roadmap.txt 3.7): the
+    purchase_order.approved outbox payload deliberately carries only
+    org_id/purchase_order_id/po_number (same "never trust a payload that
+    can go stale" rule as shortage.detected/WF-02), and
+    CreatePurchaseOrderResult (returned once, at creation time) is never
+    persisted anywhere n8n can re-read later - so WF-04 needs a live
+    endpoint to fetch the supplier contact details it actually sends to.
+    """
+    po = await _load_purchase_order(session, org_id=org_id, purchase_order_id=purchase_order_id)
+    supplier = await session.get(Supplier, po.supplier_id)
+    if supplier is None:
+        raise NotFoundError(f"supplier {po.supplier_id} not found")
+    return PurchaseOrderDetailResult(
+        purchase_order_id=po.id,
+        po_number=po.po_number,
+        status=po.status,
+        supplier_id=supplier.id,
+        supplier_name=supplier.name,
+        supplier_email=supplier.email,
+        total=po.total,
+        order_date=po.order_date,
+    )
+
+
 async def mark_purchase_order_approved(
     session: AsyncSession,
     *,

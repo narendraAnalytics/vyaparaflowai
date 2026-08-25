@@ -291,6 +291,29 @@ Grouped by category — this is the part most reusable for the next project.
   front and store that same value in the frontend's `.env.local`; don't plan
   to read it back out later.
 
+### More errors hit and how they were fixed (2026-08-25 session, VyaparaFlow)
+
+- **`n8n_validate_workflow` false-positives on a `respondToWebhook` node
+  that shares a success output with sibling nodes** (a legitimate
+  fan-out: respond immediately + continue background branches),
+  reporting it as a misplaced error handler regardless of node naming or
+  an inserted NoOp indirection. Confirmed a validator heuristic quirk,
+  not a real n8n constraint (0 invalid connections; the real execution
+  ran exactly as designed) — safe to activate/ignore.
+- **Adding a new rule case to a Switch node's `parameters.rules.values`
+  array shifts the fallback output index** — any existing connection
+  wired to the old fallback index does NOT auto-update and silently
+  fires on the wrong branch. Explicitly `removeConnection` +
+  `addConnection` the fallback onto its new index after adding a case.
+- **`n8n_update_partial_workflow` can't append one array element via an
+  index dot-path** (e.g. `parameters.rules.values[2]` on a 2-item array)
+  — replace the whole array via `updateNode` instead.
+- **Resend's sandbox/free tier only delivers to the account's own
+  verified signup email** unless a sending domain is verified — any
+  seeded/test recipient address gets a 403
+  (`validation_error`/"can only send testing emails to..."). Expected,
+  not a bug; point `to` at the verified address to prove real delivery.
+
 ---
 
 ## 5. How each workflow was actually verified (not just "looked done")

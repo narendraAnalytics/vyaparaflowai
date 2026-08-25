@@ -11,6 +11,7 @@ from app.api.v1.receiving import router as receiving_router
 from app.api.v1.sales_orders import router as sales_orders_router
 from app.api.v1.suppliers import router as suppliers_router
 from app.api.v1.warehouses import router as warehouses_router
+from app.api.v1.workflow_events import router as workflow_events_router
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth_router)
@@ -24,3 +25,4 @@ api_router.include_router(receiving_router)
 api_router.include_router(matching_router)
 api_router.include_router(payments_router)
 api_router.include_router(approvals_router)
+api_router.include_router(workflow_events_router)

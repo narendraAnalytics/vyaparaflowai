@@ -46,6 +46,22 @@ reloader and worker PIDs, `netstat -ano | grep :8000` to find them) and
 start a fresh `python -m app.dev` before concluding the code itself is
 wrong.
 
+**If `netstat`/`taskkill` won't actually clear port 8000** (reports a PID
+that `taskkill` says doesn't exist, or a new PID appears after killing the
+old one), stop trusting Git Bash's view of Windows processes and use
+PowerShell instead: `Get-Process -Name python | Stop-Process -Force` then
+`Get-NetTCPConnection -LocalPort 8000` to confirm it's actually free
+before starting a fresh server. Several stale reloader/worker processes
+can accumulate across repeated dev-server restarts in one session.
+
+**`app.workers.outbox_publisher` only publishes events that already
+exist at the moment it runs.** An event created reactively as a side
+effect of an n8n workflow's own execution (e.g. WF-02 creating a new
+purchase requisition, which fires its own `purchase_requisition.created`
+event) won't be picked up by a publisher run that started before that
+workflow finished — run it again after the triggering chain completes,
+don't assume one run drains everything downstream of it.
+
 ## Environment
 
 Copy `.env.example` to `.env` and fill in real values (`.env` is
@@ -493,6 +509,15 @@ code, etc.) must generate a fresh value per run (e.g. a `uuid.uuid4().hex`
 suffix) rather than a fixed literal — a fixed literal passes the first
 time but then permanently 409s on every later run once that row exists.
 `tests/test_master_data_api.py` is the pattern to copy.
+
+**Test fixture teardown must delete `documents`/`audit_logs` rows before
+the `Organization` row**, or teardown itself 500s with a RESTRICT-FK
+violation (found in `tests/test_sales.py`: `generate_*_pdf()` persists a
+`documents` row, `mark_*_sent()`/`_approved()`/`_rejected()` persists an
+`audit_logs` row — both `ON DELETE RESTRICT` to `organizations`). Any new
+fixture whose code path calls a PDF-generating or mark-status function
+needs the matching `delete(Document)`/`delete(AuditLog)` before deleting
+the org, same as `test_sales.py`'s rig teardown.
 
 Not every `services/` module needs Neon, though: a pure-logic module with
 no DB access (pricing.py) gets plain synchronous `pytest` tests — no

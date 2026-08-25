@@ -10,15 +10,17 @@ from app.db.models.catalog import Product, Warehouse
 from app.db.models.inventory import InventoryItem, StockLedger
 from app.db.models.numbering import DocumentSequence
 from app.db.models.org import Organization, Role, User, UserRole
-from app.db.models.partners import Supplier
+from app.db.models.partners import Customer, Supplier
 from app.db.models.purchase import (
     GoodsReceipt,
     GoodsReceiptItem,
     PurchaseOrder,
     PurchaseOrderItem,
+    PurchaseRequisition,
     SupplierInvoice,
     SupplierInvoiceItem,
 )
+from app.db.models.sales import SalesOrder
 from app.db.session import AsyncSessionLocal
 
 TELANGANA = "36"
@@ -281,6 +283,11 @@ async def test_create_partial_then_full_goods_receipt_updates_po_and_stock(clien
     assert partial.status_code == 201, partial.text
     assert partial.json()["purchase_order_status"] == "partially_received"
     assert partial.json()["grn_number"].startswith("GRN-")
+    # This rig's PO has no purchase_requisition_id (created directly, not
+    # via convert_purchase_requisition_to_orders) - WF-05's "which sales
+    # order was this for" lookup must resolve to None, not error, when
+    # there's no requisition to trace back through.
+    assert partial.json()["triggered_by_sales_order_id"] is None
 
     async with AsyncSessionLocal() as session:
         item = (
@@ -397,3 +404,81 @@ async def test_create_supplier_invoice_happy_path_and_duplicate_rejected(client,
 
     duplicate = await client.post("/api/v1/supplier-invoices", headers=_auth(token), json=payload)
     assert duplicate.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_goods_receipt_resolves_triggered_by_sales_order_id(client, rig):
+    """A PO that traces back through a requisition to the sales order
+    whose shortage created it (reactive procurement, 2.8) should surface
+    that sales_order_id on the GRN response - this is what lets WF-05
+    decide whether to call retry-reservation at all.
+    """
+    async with AsyncSessionLocal() as session:
+        sales_order = SalesOrder(
+            org_id=rig["org_id"],
+            customer_id=None,
+            order_number=f"SO-TEST-RECV-{uuid.uuid4().hex[:8]}",
+            order_date="2026-08-01",
+            status="confirmed",
+        )
+        # customer_id is NOT NULL in the schema - build a minimal customer
+        # inline rather than pulling in test_sales.py's whole rig.
+        customer = Customer(org_id=rig["org_id"], name="Retry Test Customer", state_code=TELANGANA)
+        session.add(customer)
+        await session.flush()
+        sales_order.customer_id = customer.id
+        session.add(sales_order)
+        await session.flush()
+
+        requisition = PurchaseRequisition(
+            org_id=rig["org_id"],
+            requisition_number=f"PR-TEST-RECV-{uuid.uuid4().hex[:8]}",
+            status="converted",
+            triggered_by_sales_order_id=sales_order.id,
+        )
+        session.add(requisition)
+        await session.flush()
+
+        po = (
+            await session.execute(select(PurchaseOrder).where(PurchaseOrder.id == rig["po_id"]))
+        ).scalar_one()
+        po.purchase_requisition_id = requisition.id
+        await session.commit()
+
+        ids = {
+            "sales_order_id": sales_order.id,
+            "customer_id": customer.id,
+            "requisition_id": requisition.id,
+        }
+
+    token = await _login(client, rig["warehouse_email"])
+    response = await client.post(
+        "/api/v1/goods-receipts",
+        headers=_auth(token),
+        json={
+            "purchase_order_id": str(rig["po_id"]),
+            "warehouse_id": str(rig["warehouse_id"]),
+            "received_date": "2026-08-07",
+            "lines": [
+                {
+                    "purchase_order_item_id": str(rig["po_item_id"]),
+                    "received_quantity": "10",
+                    "accepted_quantity": "10",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["triggered_by_sales_order_id"] == str(ids["sales_order_id"])
+
+    async with AsyncSessionLocal() as session:
+        po = (
+            await session.execute(select(PurchaseOrder).where(PurchaseOrder.id == rig["po_id"]))
+        ).scalar_one()
+        po.purchase_requisition_id = None
+        await session.execute(
+            delete(PurchaseRequisition).where(PurchaseRequisition.id == ids["requisition_id"])
+        )
+        await session.execute(delete(SalesOrder).where(SalesOrder.id == ids["sales_order_id"]))
+        await session.execute(delete(Customer).where(Customer.id == ids["customer_id"]))
+        await session.commit()

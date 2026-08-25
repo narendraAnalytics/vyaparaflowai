@@ -37,6 +37,9 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "supplier_invoice.match",
             "payment.record",
             "approval.manage",
+            "delivery.create",
+            "invoice.create",
+            "workflow_event.create",
         }
     ),
 }

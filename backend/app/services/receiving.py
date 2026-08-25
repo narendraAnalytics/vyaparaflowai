@@ -43,6 +43,7 @@ from app.db.models.purchase import (
     GoodsReceiptItem,
     PurchaseOrder,
     PurchaseOrderItem,
+    PurchaseRequisition,
     SupplierInvoice,
     SupplierInvoiceItem,
 )
@@ -94,6 +95,7 @@ class CreateGoodsReceiptResult(BaseModel):
     grn_number: str
     purchase_order_status: str
     lines: list[GoodsReceiptLineResult]
+    triggered_by_sales_order_id: uuid.UUID | None
 
 
 async def create_goods_receipt(
@@ -256,6 +258,18 @@ async def create_goods_receipt(
         PurchaseOrderStatus.RECEIVED if fully_received else PurchaseOrderStatus.PARTIALLY_RECEIVED
     )
 
+    # WF-05 (roadmap.txt 3.8) needs to know whether this PO traces back to
+    # a specific sales order's shortage (reactive procurement, 2.8) so it
+    # can retry that order's reservation now that stock arrived - resolved
+    # here, in the same transaction, rather than making n8n chase
+    # PO -> requisition -> triggered_by_sales_order_id itself over two more
+    # round-trips.
+    triggered_by_sales_order_id: uuid.UUID | None = None
+    if purchase_order.purchase_requisition_id is not None:
+        requisition = await session.get(PurchaseRequisition, purchase_order.purchase_requisition_id)
+        if requisition is not None:
+            triggered_by_sales_order_id = requisition.triggered_by_sales_order_id
+
     await session.flush()
 
     return CreateGoodsReceiptResult(
@@ -263,6 +277,7 @@ async def create_goods_receipt(
         grn_number=grn_number,
         purchase_order_status=purchase_order.status,
         lines=line_results,
+        triggered_by_sales_order_id=triggered_by_sales_order_id,
     )
 
 

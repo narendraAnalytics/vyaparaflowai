@@ -72,6 +72,14 @@ services) owns the state; n8n reacts to it.
   `localhost` — local testing of `sendAndWait` (or anything handing a
   callback URL to a third party) needs a real tunnel (ngrok); see root
   `.env`'s `N8N_WEBHOOK_PUBLIC_URL`.
+  A node with `onError: "continueErrorOutput"` (used on every FastAPI-
+  calling HTTP node so a backend failure returns a clean error response
+  instead of crashing) makes the WHOLE EXECUTION finish as `success` —
+  a global Error Trigger workflow (WF-99) never sees that failure. Each
+  workflow's own local "Notify Failure" node on that error branch is
+  therefore load-bearing, not redundant with a shared error workflow;
+  WF-99 only catches genuinely uncaught node crashes (Telegram/Respond
+  node failures, expression bugs).
 - **Starting a new session, n8n side**: usually nothing to do — all four
   n8n containers (`n8n-postgres`, `n8n-main`, `n8n-worker`, `n8n-webhook`)
   have `restart: unless-stopped`, so they stay running (and self-heal on
@@ -84,7 +92,11 @@ services) owns the state; n8n reacts to it.
   Telegram approval buttons, ngrok (`ngrok http 5679` — its URL changes
   every restart, requiring an update to `.env`'s `N8N_WEBHOOK_PUBLIC_URL`
   and a `docker compose up -d n8n-main n8n-worker n8n-webhook
-  --force-recreate`).
+  --force-recreate`). **MinIO is Dockerized but lacks `restart:
+  unless-stopped`** — unlike the n8n containers, it stays down after a
+  Docker Desktop restart until you run `docker compose up -d minio`;
+  any workflow/test that generates a PDF (WF-04/WF-06, receipts) will
+  fail with `EndpointConnectionError`/`ECONNREFUSED :9000` until then.
 - `backend/CLAUDE.md` has backend-specific commands and conventions.
 
 ## Monorepo layout
